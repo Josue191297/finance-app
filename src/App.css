@@ -1,0 +1,97 @@
+/* ---------- BASE ---------- */
+
+body {
+  margin: 0;
+  font-family: Arial, sans-serif;
+  background-color: var(--background);
+  color: var(--text);
+}
+
+/* ---------- CONTAINER ---------- */
+
+.container {
+  max-width: 500px;
+  margin: 60px auto;
+  background: var(--card);
+  padding: 30px;
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+}
+
+/* ---------- HEADINGS ---------- */
+
+h1 {
+  margin-top: 0;
+  text-align: center;
+  color: var(--text);
+}
+
+/* ---------- SECTIONS ---------- */
+
+.section {
+  margin-top: 30px;
+}
+
+/* ---------- INPUTS ---------- */
+
+input,
+select {
+  padding: 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--input-bg);
+  color: var(--text);
+  margin-right: 10px;
+}
+
+/* ---------- BUTTONS ---------- */
+
+button {
+  padding: 10px 15px;
+  border: none;
+  border-radius: 6px;
+  background-color: var(--primary);
+  color: var(--button-text);
+  cursor: pointer;
+  transition: 0.2s ease;
+}
+
+button:hover {
+  opacity: 0.9;
+}
+
+.delete-btn {
+  background-color: var(--danger);
+  margin-left: 10px;
+}
+
+/* ---------- TOTAL ---------- */
+
+.total {
+  margin-top: 20px;
+  font-weight: bold;
+  font-size: 18px;
+  text-align: right;
+  color: var(--text);
+}
+
+/* ---------- LIST ---------- */
+
+ul {
+  list-style: none;
+  padding: 0;
+}
+
+li {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+/* ---------- SMALL TEXT ---------- */
+
+small {
+  color: var(--muted);
+}
