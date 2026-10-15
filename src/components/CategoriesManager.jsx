@@ -1,225 +1,235 @@
-import { useState, useEffect } from "react"
+import { useState } from "react"
 import { FiEdit2, FiTrash2, FiPlus, FiMenu } from "react-icons/fi"
+import { collection, addDoc, deleteDoc, doc, getDocs, writeBatch } from "firebase/firestore"
+import { db } from "../firebase"
+import { householdId } from "../household"
+import ConfirmModal from "./ConfirmModal"
 
-const STORAGE_KEY = "app_categories"
-
-export default function CategoriesManager({ categories, setCategories }) {
+export default function CategoriesManager({ categories = [] }) {
   const [newCategory, setNewCategory] = useState("")
-  const [editingIndex, setEditingIndex] = useState(null)
+  const [editingId, setEditingId] = useState(null)
   const [editingValue, setEditingValue] = useState("")
-  const [dragIndex, setDragIndex] = useState(null)
-  const [dragOverIndex, setDragOverIndex] = useState(null)
+  const [categoryToDelete, setCategoryToDelete] = useState(null)
 
-  /* ---------------- PERSIST ORDER ---------------- */
+  const expenseCategories = categories.filter(
+    (cat) => (cat.type || "expense") === "expense"
+  )
 
-  useEffect(() => {
-    const saved = localStorage.getItem(STORAGE_KEY)
-    if (saved) {
-      setCategories(JSON.parse(saved))
-    }
-  }, [setCategories])
+  const incomeCategories = categories.filter(
+    (cat) => (cat.type || "expense") === "income"
+  )
 
-  useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(categories))
-  }, [categories])
-
-  /* ---------------- ADD ---------------- */
-
-  const addCategory = () => {
+  const addCategory = async (type) => {
     if (!newCategory.trim()) return
-    setCategories(prev => [...prev, newCategory.trim()])
-    setNewCategory("")
-  }
 
-  /* ---------------- DELETE ---------------- */
-
-  const deleteCategory = (index) => {
-    setCategories(prev => prev.filter((_, i) => i !== index))
-  }
-
-  /* ---------------- EDIT ---------------- */
-
-  const startEdit = (index) => {
-    setEditingIndex(index)
-    setEditingValue(categories[index])
-  }
-
-  const saveEdit = () => {
-    setCategories(prev =>
-      prev.map((cat, i) =>
-        i === editingIndex ? editingValue : cat
+    try {
+      await addDoc(
+        collection(db, "households", householdId, "categories"),
+        {
+          name: newCategory.trim(),
+          type,
+          createdAt: Date.now(),
+        }
       )
-    )
-    setEditingIndex(null)
+      setNewCategory("")
+    } catch (error) {
+      console.error("Error adding category:", error)
+    }
+  }
+
+  const startEdit = (cat) => {
+    setEditingId(cat.id)
+    setEditingValue(cat.name)
+  }
+
+  const cancelEdit = () => {
+    setEditingId(null)
     setEditingValue("")
   }
 
-  /* ---------------- DRAG ---------------- */
+  const saveEdit = async () => {
+    const newName = editingValue.trim()
+    const oldName = categories.find((cat) => cat.id === editingId)?.name
+    if (!newName || !editingId) return
 
-  const handleDragStart = (index) => {
-    setDragIndex(index)
+    try {
+      // Expenses store the category by name, so rename it everywhere in one batch.
+      // shortcut: one batch holds max 500 writes; split it if the household passes ~500 matching records.
+      const batch = writeBatch(db)
+      batch.update(doc(db, "households", householdId, "categories", editingId), { name: newName })
+
+      for (const name of ["expenses", "futureExpenses"]) {
+        const snapshot = await getDocs(collection(db, "households", householdId, name))
+        snapshot.forEach((record) => {
+          const data = record.data()
+          const changes = {}
+          if (data.category === oldName) changes.category = newName
+          if (data.items?.some((item) => item.category === oldName)) {
+            changes.items = data.items.map((item) =>
+              item.category === oldName ? { ...item, category: newName } : item
+            )
+          }
+          if (Object.keys(changes).length) batch.update(record.ref, changes)
+        })
+      }
+
+      await batch.commit()
+      cancelEdit()
+    } catch (error) {
+      console.error("Error editing category:", error)
+    }
   }
 
-  const handleDragOver = (e, index) => {
-    e.preventDefault()
-    setDragOverIndex(index)
+  const confirmDelete = async () => {
+    if (!categoryToDelete) return
+
+    try {
+      await deleteDoc(
+        doc(db, "households", householdId, "categories", categoryToDelete.id)
+      )
+      setCategoryToDelete(null)
+    } catch (error) {
+      console.error("Error deleting category:", error)
+    }
   }
 
-  const handleDrop = (index) => {
-    if (dragIndex === null || dragIndex === index) return
+  const renderCategoryList = (list, emptyMessage) => (
+    <div style={listStyle}>
+      {list.length === 0 ? (
+        <p style={emptyStyle}>{emptyMessage}</p>
+      ) : (
+        list.map((cat) => (
+          <div key={cat.id} style={rowStyle}>
+            {editingId === cat.id ? (
+              <>
+                <input
+                  autoFocus
+                  value={editingValue}
+                  onChange={(e) => setEditingValue(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") saveEdit()
+                    if (e.key === "Escape") cancelEdit()
+                  }}
+                  style={inputStyle}
+                />
 
-    const updated = [...categories]
-    const draggedItem = updated[dragIndex]
+                <div style={actionsStyle}>
+                  <button onClick={saveEdit} style={textButtonStyle}>
+                    Save
+                  </button>
+                  <button onClick={cancelEdit} style={textButtonStyle}>
+                    Cancel
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <div style={categoryNameStyle}>
+                  <FiMenu style={{ opacity: 0.5 }} />
+                  <span>{cat.name}</span>
+                </div>
 
-    updated.splice(dragIndex, 1)
-    updated.splice(index, 0, draggedItem)
+                <div style={actionsStyle}>
+                  <button
+                    onClick={() => startEdit(cat)}
+                    style={iconBtn}
+                    aria-label={`Edit ${cat.name}`}
+                    title="Edit"
+                  >
+                    <FiEdit2 />
+                  </button>
 
-    setCategories(updated)
-    setDragIndex(null)
-    setDragOverIndex(null)
-  }
-
-  const handleDragEnd = () => {
-    setDragIndex(null)
-    setDragOverIndex(null)
-  }
+                  <button
+                    onClick={() => setCategoryToDelete(cat)}
+                    style={{ ...iconBtn, color: "#ef4444" }}
+                    aria-label={`Delete ${cat.name}`}
+                    title="Delete"
+                  >
+                    <FiTrash2 />
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        ))
+      )}
+    </div>
+  )
 
   return (
     <div style={containerStyle}>
-      <h2 style={{ marginBottom: 20 }}>Categories Manager</h2>
+      <h2 style={{ marginTop: 0, marginBottom: 24 }}>Categories</h2>
 
-      {/* Add Category */}
-      <div style={addRowStyle}>
-        <input
-          value={newCategory}
-          onChange={(e) => setNewCategory(e.target.value)}
-          placeholder="New Category"
-          style={inputStyle}
-        />
-        <button onClick={addCategory} style={addButtonStyle}>
-          <FiPlus />
-        </button>
-      </div>
-
-      {/* Category List */}
-      <div style={{ display: "flex", flexDirection: "column" }}>
-        {categories.map((cat, index) => (
-          <div key={index}>
-            
-            {/* Drag Indicator Line */}
-            {dragOverIndex === index && dragIndex !== index && (
-              <div style={dragLineStyle} />
-            )}
-
-            <div
-              style={{
-                ...rowStyle,
-                opacity: dragIndex === index ? 0.4 : 1,
-              }}
-              draggable
-              onDragStart={() => handleDragStart(index)}
-              onDragOver={(e) => handleDragOver(e, index)}
-              onDrop={() => handleDrop(index)}
-              onDragEnd={handleDragEnd}
-            >
-              {editingIndex === index ? (
-                <>
-                  <input
-                    value={editingValue}
-                    onChange={(e) => setEditingValue(e.target.value)}
-                    style={inputStyle}
-                  />
-                  <button onClick={saveEdit} style={iconBtn}>
-                    Save
-                  </button>
-                </>
-              ) : (
-                <>
-                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                    <FiMenu style={{ opacity: 0.5, cursor: "grab" }} />
-                    <span>{cat}</span>
-                  </div>
-
-                  <div style={{ display: "flex", gap: 10 }}>
-                    <button
-                      onClick={() => startEdit(index)}
-                      style={iconBtn}
-                    >
-                      <FiEdit2 />
-                    </button>
-
-                    <button
-                      onClick={() => deleteCategory(index)}
-                      style={iconBtn}
-                    >
-                      <FiTrash2 />
-                    </button>
-                  </div>
-                </>
-              )}
-            </div>
+      <section style={sectionStyle}>
+        <div style={sectionHeaderStyle}>
+          <div>
+            <h3 style={sectionTitleStyle}>Expense Categories</h3>
+            <p style={sectionDescriptionStyle}>Categories used when recording expenses.</p>
           </div>
-        ))}
-      </div>
+        </div>
+
+        <div style={addRowStyle}>
+          <input
+            value={newCategory}
+            onChange={(e) => setNewCategory(e.target.value)}
+            placeholder="New expense category"
+            style={inputStyle}
+          />
+          <button onClick={() => addCategory("expense")} style={addButtonStyle}>
+            <FiPlus />
+          </button>
+        </div>
+
+        {renderCategoryList(expenseCategories, "No expense categories yet.")}
+      </section>
+
+      <section style={sectionStyle}>
+        <div style={sectionHeaderStyle}>
+          <div>
+            <h3 style={sectionTitleStyle}>Income Categories</h3>
+            <p style={sectionDescriptionStyle}>Categories used when recording income.</p>
+          </div>
+        </div>
+
+        <div style={addRowStyle}>
+          <input
+            value={newCategory}
+            onChange={(e) => setNewCategory(e.target.value)}
+            placeholder="New income category"
+            style={inputStyle}
+          />
+          <button onClick={() => addCategory("income")} style={incomeAddButtonStyle}>
+            <FiPlus />
+          </button>
+        </div>
+
+        {renderCategoryList(incomeCategories, "No income categories yet.")}
+      </section>
+
+      {categoryToDelete && (
+        <ConfirmModal
+          message={`Are you sure you want to delete "${categoryToDelete.name}"?`}
+          onConfirm={confirmDelete}
+          onCancel={() => setCategoryToDelete(null)}
+        />
+      )}
     </div>
   )
 }
 
-
-/* ---------------- STYLES ---------------- */
-
-const containerStyle = {
-  padding: 24,
-  background: "var(--card)",
-  color: "var(--text)",
-  borderRadius: 16,
-}
-
-const addRowStyle = {
-  display: "flex",
-  gap: 10,
-  marginBottom: 20,
-}
-
-const inputStyle = {
-  padding: "10px 12px",
-  borderRadius: 10,
-  border: "1px solid var(--border)",
-  background: "var(--background)",
-  color: "var(--text)",
-  flex: 1,
-}
-
-const addButtonStyle = {
-  padding: "0 14px",
-  borderRadius: 10,
-  border: "none",
-  background: "#1677ff",
-  color: "white",
-  cursor: "pointer",
-}
-
-const rowStyle = {
-  display: "flex",
-  justifyContent: "space-between",
-  alignItems: "center",
-  padding: "12px 14px",
-  borderRadius: 12,
-  border: "1px solid var(--border)",
-  background: "var(--background)",
-  marginBottom: 8,
-}
-
-const iconBtn = {
-  background: "none",
-  border: "none",
-  cursor: "pointer",
-  color: "var(--text)",
-}
-
-const dragLineStyle = {
-  height: 3,
-  background: "#1677ff",
-  borderRadius: 2,
-  margin: "4px 0",
-}
+const containerStyle = { padding: 24, background: "var(--card)", color: "var(--text)", borderRadius: 16 }
+const sectionStyle = { marginBottom: 24, padding: 18, border: "1px solid var(--border)", borderRadius: 14 }
+const sectionHeaderStyle = { marginBottom: 14 }
+const sectionTitleStyle = { margin: 0, fontSize: 18 }
+const sectionDescriptionStyle = { margin: "5px 0 0", color: "var(--text-secondary)", fontSize: 13 }
+const addRowStyle = { display: "flex", gap: 10, marginBottom: 16 }
+const inputStyle = { padding: "10px 12px", borderRadius: 10, border: "1px solid var(--border)", background: "var(--card)", color: "var(--text)", flex: 1, minWidth: 0 }
+const addButtonStyle = { width: 42, height: 42, borderRadius: 10, border: "none", background: "#ef4444", color: "white", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }
+const incomeAddButtonStyle = { ...addButtonStyle, background: "#16a34a" }
+const listStyle = { display: "flex", flexDirection: "column", gap: 8 }
+const rowStyle = { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, padding: "12px 14px", borderRadius: 12, border: "1px solid var(--border)", background: "var(--card)" }
+const categoryNameStyle = { display: "flex", alignItems: "center", gap: 10, minWidth: 0 }
+const actionsStyle = { display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }
+const iconBtn = { width: 32, height: 32, background: "transparent", border: "none", cursor: "pointer", color: "var(--text)", display: "flex", alignItems: "center", justifyContent: "center" }
+const textButtonStyle = { border: "1px solid var(--border)", background: "transparent", color: "var(--text)", borderRadius: 8, padding: "7px 10px", cursor: "pointer" }
+const emptyStyle = { color: "var(--text-secondary)", fontSize: 14, margin: "6px 0" }

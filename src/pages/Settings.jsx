@@ -1,9 +1,13 @@
 import { useState } from "react";
 import CategoriesManager from "../components/CategoriesManager";
+import { signOut } from "firebase/auth";
+import { auth } from "../firebase";
+import { useNavigate } from "react-router-dom";
 
-export default function Settings({ categories, setCategories, theme, setTheme }) {
+export default function Settings({ categories, theme, setTheme }) {
 
   const [activeSection, setActiveSection] = useState(null);
+  const navigate = useNavigate();
 
   const toggleTheme = () => {
     setTheme(prev => (prev === "light" ? "dark" : "light"));
@@ -30,10 +34,24 @@ export default function Settings({ categories, setCategories, theme, setTheme })
           </button>
 
           <button
+            onClick={() => navigate("/history")}
+            style={cardButton}
+          >
+            History
+          </button>
+
+          <button
             onClick={() => setActiveSection("theme")}
             style={cardButton}
           >
             Theme
+          </button>
+          
+          <button
+            onClick={() => setActiveSection("logout")}
+            style={cardButton}
+          >
+            Logout
           </button>
 
         </div>
@@ -51,8 +69,25 @@ export default function Settings({ categories, setCategories, theme, setTheme })
 
           <CategoriesManager
             categories={categories}
-            setCategories={setCategories}
           />
+        </>
+      )}
+
+      {/* LOGOUT SECTION */}
+      {activeSection === "logout" && (
+        <>
+          <button
+            onClick={() => setActiveSection(null)}
+            style={backButton}
+          >
+            ← Back
+          </button>
+
+          <button
+            onClick={() => signOut(auth)}
+          >
+            Logout
+          </button>
         </>
       )}
 

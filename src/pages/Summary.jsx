@@ -1,11 +1,23 @@
 import { useState, useMemo } from "react";
+import {
+  parseLocalDate,
+  toDateInput as formatDate,
+  amountInCategory,
+  totalsByCategory,
+  sumByType,
+} from "../money";
 
 function Summary({ expenses }) {
   const today = new Date();
 
-  const formatDate = (date) => date.toISOString().split("T")[0];
+  const [selectedCategory, setSelectedCategory] = useState(null);
 
-  // Default = current month
+  const formatCurrency = (value) =>
+    Number(value).toLocaleString("en-US", {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    });
+
   const defaultStart = new Date(today.getFullYear(), today.getMonth(), 1);
   const defaultEnd = new Date(today.getFullYear(), today.getMonth() + 1, 0);
 
@@ -13,7 +25,7 @@ function Summary({ expenses }) {
   const [endDate, setEndDate] = useState(formatDate(defaultEnd));
   const [activePreset, setActivePreset] = useState("currentMonth");
 
-  // ---------- PRESET FUNCTIONS ----------
+  /* ---------- PRESETS (unchanged) ---------- */
 
   const setCurrentWeek = () => {
     const now = new Date();
@@ -69,48 +81,62 @@ function Summary({ expenses }) {
     setActivePreset("last3Months");
   };
 
-  // ---------- FILTER ----------
+  /* ---------- FILTER ---------- */
+
   const filtered = useMemo(() => {
+    const start = parseLocalDate(startDate);
+    const end = parseLocalDate(endDate);
+
     return expenses.filter((item) => {
       if (!item.date) return false;
-      const date = new Date(item.date);
-      return date >= new Date(startDate) && date <= new Date(endDate);
+
+      const itemDate = parseLocalDate(item.date);
+      if (!itemDate) return false;
+
+      return itemDate >= start && itemDate <= end;
     });
   }, [expenses, startDate, endDate]);
 
-  // ---------- CALCULATIONS ----------
-  const totalIncome = filtered
-    .filter((i) => i.type === "income")
-    .reduce((sum, i) => sum + Number(i.amount), 0);
+  /* ---------- CATEGORY DETAIL ---------- */
 
-  const totalExpense = filtered
-    .filter((i) => i.type === "expense")
-    .reduce((sum, i) => sum + Number(i.amount), 0);
+  const categoryExpenses = useMemo(() => {
+    if (!selectedCategory) return [];
 
+    return filtered
+      .map((i) => ({ ...i, categoryAmount: amountInCategory(i, selectedCategory) }))
+      .filter((i) => i.categoryAmount > 0)
+      .sort((a, b) => parseLocalDate(b.date) - parseLocalDate(a.date));
+  }, [filtered, selectedCategory]);
+
+  /* ---------- ALL TIME ---------- */
+
+  const currentBalance =
+    sumByType(expenses, "income") - sumByType(expenses, "expense");
+
+  /* ---------- FILTERED CALCS ---------- */
+
+  const totalIncome = sumByType(filtered, "income");
+  const totalExpense = sumByType(filtered, "expense");
   const netBalance = totalIncome - totalExpense;
 
-  const groupedByCategory = useMemo(() => {
-    const map = {};
-    filtered.forEach((item) => {
-      if (item.type === "expense") {
-        if (!map[item.category]) map[item.category] = 0;
-        map[item.category] += Number(item.amount);
-      }
-    });
+  const groupedByCategory = useMemo(() => totalsByCategory(filtered), [filtered]);
 
-    return Object.keys(map).map((key) => ({
-      name: key,
-      value: map[key],
-    }));
-  }, [filtered]);
+  /* ---------- UI ---------- */
 
-  // ---------- UI ----------
   return (
     <div style={containerStyle}>
-      <h2 style={{ color: "var(--text)" }}>Summary</h2>
+      <h2 style={{ color: "var(--text)", marginBottom: 10 }}>Summary</h2>
 
-      {/* DATE RANGE */}
-      <div style={{ marginTop: 20 }}>
+      {/* HERO */}
+      <div style={heroCard}>
+        <p style={heroLabel}>Current Balance</p>
+        <h1 style={heroAmount}>
+          ¢{formatCurrency(currentBalance)}
+        </h1>
+      </div>
+
+      {/* DATE */}
+      <div style={{ marginTop: 25 }}>
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
           <input
             type="date"
@@ -130,75 +156,88 @@ function Summary({ expenses }) {
           />
         </div>
 
-        {/* PRESETS */}
         <div style={{ marginTop: 12, display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <PresetButton
-            active={activePreset === "currentWeek"}
-            onClick={setCurrentWeek}
-          >
-            Current Week
-          </PresetButton>
-
-          <PresetButton
-            active={activePreset === "lastWeek"}
-            onClick={setLastWeek}
-          >
-            Last Week
-          </PresetButton>
-
-          <PresetButton
-            active={activePreset === "currentMonth"}
-            onClick={setCurrentMonth}
-          >
-            Current Month
-          </PresetButton>
-
-          <PresetButton
-            active={activePreset === "lastMonth"}
-            onClick={setLastMonth}
-          >
-            Last Month
-          </PresetButton>
-
-          <PresetButton
-            active={activePreset === "last3Months"}
-            onClick={setLastThreeMonths}
-          >
-            Last 3 Months
-          </PresetButton>
+          <PresetButton active={activePreset === "currentWeek"} onClick={setCurrentWeek}>Current Week</PresetButton>
+          <PresetButton active={activePreset === "lastWeek"} onClick={setLastWeek}>Last Week</PresetButton>
+          <PresetButton active={activePreset === "currentMonth"} onClick={setCurrentMonth}>Current Month</PresetButton>
+          <PresetButton active={activePreset === "lastMonth"} onClick={setLastMonth}>Last Month</PresetButton>
+          <PresetButton active={activePreset === "last3Months"} onClick={setLastThreeMonths}>Last 3 Months</PresetButton>
         </div>
       </div>
 
-      {/* NET BALANCE */}
-      <div style={cardStyle}>
-        <h3 style={{ color: "var(--text)" }}>
-          Net Balance: ${netBalance.toFixed(2)}
-        </h3>
-        <p style={{ color: "#0b910b" }}>
-          Income: ${totalIncome.toFixed(2)}
-        </p>
-        <p style={{ color: "#ef4444" }}>
-          Expenses: ${totalExpense.toFixed(2)}
-        </p>
-      </div>
+      {/* DETAIL VIEW */}
+      {selectedCategory ? (
+        <div style={{ marginTop: 30 }}>
+          <button
+            onClick={() => setSelectedCategory(null)}
+            style={backButton}
+          >
+            ← Back
+          </button>
 
-      {/* CATEGORY TOTALS */}
-      <div style={{ marginTop: 30 }}>
-        <h3 style={{ color: "var(--text)" }}>Category Totals</h3>
+          <h3 style={{ color: "var(--text)", marginTop: 10 }}>
+            {selectedCategory}
+          </h3>
 
-        {groupedByCategory.length === 0 && (
-          <p style={{ color: "var(--text-secondary)" }}>
-            No expenses in selected range.
-          </p>
-        )}
+          {categoryExpenses.length === 0 ? (
+            <p style={{ color: "var(--text-secondary)" }}>
+              No expenses found.
+            </p>
+          ) : (
+            categoryExpenses.map((exp) => (
+              <div key={exp.id} style={expenseRow}>
+                <div>
+                  <strong>{exp.name}</strong>
+                  <div style={{ fontSize: 12, opacity: 0.7 }}>
+                    {exp.date}
+                  </div>
+                </div>
 
-        {groupedByCategory.map((cat, index) => (
-          <div key={index} style={categoryRow}>
-            <span>{cat.name}</span>
-            <strong>${cat.value.toFixed(2)}</strong>
+                <div>
+                  ¢{formatCurrency(exp.categoryAmount)}
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      ) : (
+        <>
+          {/* BALANCE */}
+          <div style={cardStyle}>
+            <h3 style={{ color: "var(--text)", marginBottom: 10 }}>
+              Net Balance: ¢{formatCurrency(netBalance)}
+            </h3>
+            <p style={{ color: "#0b910b", margin: 0 }}>
+              Income: ¢{formatCurrency(totalIncome)}
+            </p>
+            <p style={{ color: "#ef4444", marginTop: 6 }}>
+              Expenses: ¢{formatCurrency(totalExpense)}
+            </p>
           </div>
-        ))}
-      </div>
+
+          {/* CATEGORIES */}
+          <div style={{ marginTop: 30 }}>
+            <h3 style={{ color: "var(--text)" }}>Category Totals</h3>
+
+            {groupedByCategory.length === 0 && (
+              <p style={{ color: "var(--text-secondary)" }}>
+                No expenses in selected range.
+              </p>
+            )}
+
+            {groupedByCategory.map((cat, index) => (
+              <div
+                key={index}
+                style={categoryRowClickable}
+                onClick={() => setSelectedCategory(cat.name)}
+              >
+                <span>{cat.name}</span>
+                <strong>¢{formatCurrency(cat.value)}</strong>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -220,7 +259,6 @@ function PresetButton({ children, onClick, active }) {
         background: active ? "var(--primary-soft)" : "var(--card)",
         color: "var(--text)",
         cursor: "pointer",
-        transition: "0.2s"
       }}
     >
       {children}
@@ -245,10 +283,50 @@ const cardStyle = {
   border: "1px solid var(--border)"
 };
 
-const categoryRow = {
+const categoryRowClickable = {
   display: "flex",
   justifyContent: "space-between",
-  padding: "8px 0",
+  padding: "10px 0",
+  borderBottom: "1px solid var(--border)",
+  color: "var(--text)",
+  cursor: "pointer"
+};
+
+const expenseRow = {
+  display: "flex",
+  justifyContent: "space-between",
+  padding: "10px 0",
   borderBottom: "1px solid var(--border)",
   color: "var(--text)"
+};
+
+const backButton = {
+  padding: "6px 12px",
+  borderRadius: 8,
+  border: "1px solid var(--border)",
+  background: "var(--card)",
+  color: "var(--text)",
+  cursor: "pointer"
+};
+
+const heroCard = {
+  marginTop: 10,
+  padding: "28px 20px",
+  borderRadius: 16,
+  background: "linear-gradient(135deg, var(--card), #1a1a1a)",
+  border: "1px solid var(--border)",
+  textAlign: "center",
+};
+
+const heroLabel = {
+  margin: 0,
+  fontSize: 13,
+  color: "var(--text-secondary)",
+};
+
+const heroAmount = {
+  margin: "8px 0 0 0",
+  fontSize: "clamp(28px, 4vw, 36px)",
+  fontWeight: 700,
+  color: "var(--text)",
 };
