@@ -1,12 +1,15 @@
 import { useState } from "react"
-import { parseLocalDate, expenseTotal as getTotal } from "../money"
+import { parseLocalDate, expenseTotal as getTotal, transactionLabel } from "../money"
 
 function History({ expenses }) {
   const [search, setSearch] = useState("")
 
   const filteredExpenses = expenses
     .filter((expense) => {
-      const text = `${expense.name || ""} ${expense.category || ""}`.toLowerCase()
+      const itemText = (expense.items || [])
+        .map((item) => `${item.name || ""} ${item.category || ""}`)
+        .join(" ")
+      const text = `${expense.name || ""} ${expense.category || ""} ${itemText}`.toLowerCase()
       return text.includes(search.toLowerCase())
     })
     .sort((a, b) => {
@@ -37,9 +40,7 @@ function History({ expenses }) {
               <div>
                 <strong>{expense.name}</strong>
                 <div style={metaStyle}>
-                  {expense.transactionMode === "detailed"
-                    ? `Receipt • ${expense.items?.length || 0} items`
-                    : expense.category || "No category"}
+                  {transactionLabel(expense)}
 
                   {" | "}
 
@@ -51,8 +52,8 @@ function History({ expenses }) {
                 style={{
                   color:
                     expense.type === "income"
-                      ? "#0b910b"
-                      : "#ef4444",
+                      ? "var(--income)"
+                      : "var(--expense)",
                 }}
               >
                 ₡

@@ -4,7 +4,7 @@ import { doc, deleteDoc } from "firebase/firestore"
 import { db } from "../firebase"
 import { householdId } from "../household"
 import { FiEdit2, FiX } from "react-icons/fi"
-import { parseLocalDate, expenseTotal as getExpenseTotal } from "../money"
+import { parseLocalDate, expenseTotal as getExpenseTotal, transactionLabel } from "../money"
 
 const RECENT_DAYS = 30
 
@@ -95,9 +95,7 @@ function Dashboard({ categories, expenses }) {
 
               <div style={rowStyle}>
                 <div style={metaStyle}>
-                  {expense.transactionMode === "detailed"
-                    ? `Receipt • ${expense.items?.length || 0} items`
-                    : expense.category}
+                  {transactionLabel(expense)}
 
                   {" | "}
 
@@ -109,8 +107,8 @@ function Dashboard({ categories, expenses }) {
                     ...amountStyle,
                     color:
                       expense.type === "income"
-                        ? "#0b910b"
-                        : "#ef4444",
+                        ? "var(--income)"
+                        : "var(--expense)",
                   }}
                 >
                   ₡
@@ -122,7 +120,7 @@ function Dashboard({ categories, expenses }) {
               </div>
 
               {expense.transactionMode === "detailed" &&
-                expense.items?.length > 0 && (
+                expense.items?.length > 1 && (
                   <div style={itemsContainerStyle}>
                     {expense.items.map((item, index) => (
                       <div key={index} style={itemRowStyle}>
@@ -323,7 +321,7 @@ const modalStyle = {
 
 const deleteButtonStyle = {
   marginLeft: 10,
-  background: "#ff4d4f",
+  background: "var(--expense)",
   color: "white",
   border: "none",
   padding: "6px 12px",

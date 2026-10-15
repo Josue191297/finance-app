@@ -5,7 +5,7 @@ export default function SyncIndicator() {
 
   const getColor = () => {
     if (status === "saving") return "#facc15" // yellow
-    if (status === "offline") return "#ef4444" // red
+    if (status === "offline") return "var(--expense)" // red
     return "#22c55e" // green
   }
 

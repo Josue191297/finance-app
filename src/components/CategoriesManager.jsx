@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useRef, useState } from "react"
 import { FiEdit2, FiTrash2, FiPlus, FiMenu } from "react-icons/fi"
 import { collection, addDoc, deleteDoc, doc, getDocs, writeBatch } from "firebase/firestore"
 import { db } from "../firebase"
@@ -6,10 +6,12 @@ import { householdId } from "../household"
 import ConfirmModal from "./ConfirmModal"
 
 export default function CategoriesManager({ categories = [] }) {
-  const [newCategory, setNewCategory] = useState("")
+  const [newCategory, setNewCategory] = useState({ expense: "", income: "" })
   const [editingId, setEditingId] = useState(null)
   const [editingValue, setEditingValue] = useState("")
   const [categoryToDelete, setCategoryToDelete] = useState(null)
+  const [drag, setDrag] = useState(null) // { type, ids, activeId } while a row is dragged
+  const rowRefs = useRef({})
 
   const expenseCategories = categories.filter(
     (cat) => (cat.type || "expense") === "expense"
@@ -20,21 +22,70 @@ export default function CategoriesManager({ categories = [] }) {
   )
 
   const addCategory = async (type) => {
-    if (!newCategory.trim()) return
+    const name = newCategory[type].trim()
+    if (!name) return
 
     try {
       await addDoc(
         collection(db, "households", householdId, "categories"),
         {
-          name: newCategory.trim(),
+          name,
           type,
           createdAt: Date.now(),
         }
       )
-      setNewCategory("")
+      setNewCategory((prev) => ({ ...prev, [type]: "" }))
     } catch (error) {
       console.error("Error adding category:", error)
     }
+  }
+
+  /* ---------- REORDER (pointer drag works with mouse and touch) ---------- */
+
+  const saveOrder = async (ids) => {
+    const batch = writeBatch(db)
+    ids.forEach((id, index) =>
+      batch.update(doc(db, "households", householdId, "categories", id), { order: index })
+    )
+    try {
+      await batch.commit()
+    } catch (error) {
+      console.error("Error saving category order:", error)
+    }
+  }
+
+  const startDrag = (e, type, list, id) => {
+    e.currentTarget.setPointerCapture(e.pointerId)
+    setDrag({ type, ids: list.map((cat) => cat.id), activeId: id })
+  }
+
+  const moveDrag = (e) => {
+    if (!drag) return
+    const others = drag.ids.filter((id) => id !== drag.activeId)
+    let index = others.findIndex((id) => {
+      const rect = rowRefs.current[id]?.getBoundingClientRect()
+      return rect && e.clientY < rect.top + rect.height / 2
+    })
+    if (index === -1) index = others.length
+    const ids = [...others.slice(0, index), drag.activeId, ...others.slice(index)]
+    if (ids.join() !== drag.ids.join()) setDrag({ ...drag, ids })
+  }
+
+  const endDrag = (list) => {
+    if (!drag) return
+    if (drag.ids.join() !== list.map((cat) => cat.id).join()) saveOrder(drag.ids)
+    setDrag(null)
+  }
+
+  // Keyboard alternative: arrow keys on the handle move the category one step.
+  const moveWithKeys = (e, list, index) => {
+    const step = { ArrowUp: -1, ArrowDown: 1 }[e.key]
+    const target = index + (step || 0)
+    if (!step || target < 0 || target >= list.length) return
+    e.preventDefault()
+    const ids = list.map((cat) => cat.id)
+    ;[ids[index], ids[target]] = [ids[target], ids[index]]
+    saveOrder(ids)
   }
 
   const startEdit = (cat) => {
@@ -93,13 +144,25 @@ export default function CategoriesManager({ categories = [] }) {
     }
   }
 
-  const renderCategoryList = (list, emptyMessage) => (
+  const renderCategoryList = (list, type, emptyMessage) => {
+    const shown =
+      drag?.type === type
+        ? drag.ids.map((id) => list.find((cat) => cat.id === id)).filter(Boolean)
+        : list
+
+    return (
     <div style={listStyle}>
-      {list.length === 0 ? (
+      {shown.length === 0 ? (
         <p style={emptyStyle}>{emptyMessage}</p>
       ) : (
-        list.map((cat) => (
-          <div key={cat.id} style={rowStyle}>
+        shown.map((cat, index) => (
+          <div
+            key={cat.id}
+            ref={(el) => {
+              rowRefs.current[cat.id] = el
+            }}
+            style={drag?.activeId === cat.id ? { ...rowStyle, ...draggingRowStyle } : rowStyle}
+          >
             {editingId === cat.id ? (
               <>
                 <input
@@ -125,8 +188,20 @@ export default function CategoriesManager({ categories = [] }) {
             ) : (
               <>
                 <div style={categoryNameStyle}>
-                  <FiMenu style={{ opacity: 0.5 }} />
-                  <span>{cat.name}</span>
+                  <button
+                    type="button"
+                    style={{ ...handleStyle, cursor: drag ? "grabbing" : "grab" }}
+                    aria-label={`Reorder ${cat.name}. Drag, or use the up and down arrow keys.`}
+                    title="Drag to reorder"
+                    onPointerDown={(e) => startDrag(e, type, list, cat.id)}
+                    onPointerMove={moveDrag}
+                    onPointerUp={() => endDrag(list)}
+                    onPointerCancel={() => setDrag(null)}
+                    onKeyDown={(e) => moveWithKeys(e, list, index)}
+                  >
+                    <FiMenu />
+                  </button>
+                  <span style={categoryTextStyle}>{cat.name}</span>
                 </div>
 
                 <div style={actionsStyle}>
@@ -141,7 +216,7 @@ export default function CategoriesManager({ categories = [] }) {
 
                   <button
                     onClick={() => setCategoryToDelete(cat)}
-                    style={{ ...iconBtn, color: "#ef4444" }}
+                    style={{ ...iconBtn, color: "var(--expense)" }}
                     aria-label={`Delete ${cat.name}`}
                     title="Delete"
                   >
@@ -154,7 +229,8 @@ export default function CategoriesManager({ categories = [] }) {
         ))
       )}
     </div>
-  )
+    )
+  }
 
   return (
     <div style={containerStyle}>
@@ -164,46 +240,50 @@ export default function CategoriesManager({ categories = [] }) {
         <div style={sectionHeaderStyle}>
           <div>
             <h3 style={sectionTitleStyle}>Expense Categories</h3>
-            <p style={sectionDescriptionStyle}>Categories used when recording expenses.</p>
+            <p style={sectionDescriptionStyle}>Drag ☰ to change the order used in every list.</p>
           </div>
         </div>
 
         <div style={addRowStyle}>
           <input
-            value={newCategory}
-            onChange={(e) => setNewCategory(e.target.value)}
+            value={newCategory.expense}
+            onChange={(e) => setNewCategory((prev) => ({ ...prev, expense: e.target.value }))}
+            onKeyDown={(e) => e.key === "Enter" && addCategory("expense")}
             placeholder="New expense category"
+            aria-label="New expense category"
             style={inputStyle}
           />
-          <button onClick={() => addCategory("expense")} style={addButtonStyle}>
+          <button onClick={() => addCategory("expense")} style={addButtonStyle} aria-label="Add expense category">
             <FiPlus />
           </button>
         </div>
 
-        {renderCategoryList(expenseCategories, "No expense categories yet.")}
+        {renderCategoryList(expenseCategories, "expense", "No expense categories yet.")}
       </section>
 
       <section style={sectionStyle}>
         <div style={sectionHeaderStyle}>
           <div>
             <h3 style={sectionTitleStyle}>Income Categories</h3>
-            <p style={sectionDescriptionStyle}>Categories used when recording income.</p>
+            <p style={sectionDescriptionStyle}>Drag ☰ to change the order used in every list.</p>
           </div>
         </div>
 
         <div style={addRowStyle}>
           <input
-            value={newCategory}
-            onChange={(e) => setNewCategory(e.target.value)}
+            value={newCategory.income}
+            onChange={(e) => setNewCategory((prev) => ({ ...prev, income: e.target.value }))}
+            onKeyDown={(e) => e.key === "Enter" && addCategory("income")}
             placeholder="New income category"
+            aria-label="New income category"
             style={inputStyle}
           />
-          <button onClick={() => addCategory("income")} style={incomeAddButtonStyle}>
+          <button onClick={() => addCategory("income")} style={incomeAddButtonStyle} aria-label="Add income category">
             <FiPlus />
           </button>
         </div>
 
-        {renderCategoryList(incomeCategories, "No income categories yet.")}
+        {renderCategoryList(incomeCategories, "income", "No income categories yet.")}
       </section>
 
       {categoryToDelete && (
@@ -224,11 +304,14 @@ const sectionTitleStyle = { margin: 0, fontSize: 18 }
 const sectionDescriptionStyle = { margin: "5px 0 0", color: "var(--text-secondary)", fontSize: 13 }
 const addRowStyle = { display: "flex", gap: 10, marginBottom: 16 }
 const inputStyle = { padding: "10px 12px", borderRadius: 10, border: "1px solid var(--border)", background: "var(--card)", color: "var(--text)", flex: 1, minWidth: 0 }
-const addButtonStyle = { width: 42, height: 42, borderRadius: 10, border: "none", background: "#ef4444", color: "white", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }
-const incomeAddButtonStyle = { ...addButtonStyle, background: "#16a34a" }
+const addButtonStyle = { width: 42, height: 42, borderRadius: 10, border: "none", background: "var(--expense)", color: "white", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }
+const incomeAddButtonStyle = { ...addButtonStyle, background: "var(--income)" }
 const listStyle = { display: "flex", flexDirection: "column", gap: 8 }
-const rowStyle = { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, padding: "12px 14px", borderRadius: 12, border: "1px solid var(--border)", background: "var(--card)" }
-const categoryNameStyle = { display: "flex", alignItems: "center", gap: 10, minWidth: 0 }
+const rowStyle = { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, padding: "8px 10px 8px 4px", borderRadius: 12, border: "1px solid var(--border)", background: "var(--card)", transition: "box-shadow 0.15s ease, transform 0.15s ease", userSelect: "none" }
+const draggingRowStyle = { position: "relative", zIndex: 1, borderColor: "var(--primary)", boxShadow: "0 8px 24px rgba(0,0,0,0.18)", transform: "scale(1.02)" }
+const categoryNameStyle = { display: "flex", alignItems: "center", gap: 6, minWidth: 0 }
+const categoryTextStyle = { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }
+const handleStyle = { width: 40, height: 40, padding: 0, flexShrink: 0, display: "grid", placeItems: "center", border: "none", background: "transparent", color: "var(--text-secondary)", touchAction: "none" }
 const actionsStyle = { display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }
 const iconBtn = { width: 32, height: 32, background: "transparent", border: "none", cursor: "pointer", color: "var(--text)", display: "flex", alignItems: "center", justifyContent: "center" }
 const textButtonStyle = { border: "1px solid var(--border)", background: "transparent", color: "var(--text)", borderRadius: 8, padding: "7px 10px", cursor: "pointer" }

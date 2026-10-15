@@ -58,7 +58,25 @@ export const totalsByCategory = (expenses) => {
   }))
 }
 
-export const sumByType = (expenses, type) =>
+// Short description for lists: the category for one item, otherwise the item count.
+export const transactionLabel = (expense) => {
+  if (!isDetailed(expense)) return expense.category || "No category"
+  if (expense.items.length === 1) return expense.items[0].category || "No category"
+  return `${expense.items.length} items`
+}
+
+export const isSavingsCategory =(category) =>
+  category?.trim().toLowerCase() === "savings"
+
+// How much of an expense goes to its linked savings goal: only the receipt lines in "Savings".
+export const savingsAmount = (expense) =>
+  isDetailed(expense)
+    ? expense.items
+        .filter((item) => isSavingsCategory(item.category))
+        .reduce((sum, item) => sum + Number(item.amount || 0), 0)
+    : Number(expense.amount || 0)
+
+export const sumByType =(expenses, type) =>
   expenses
     .filter((expense) => expense.type === type)
     .reduce((sum, expense) => sum + expenseTotal(expense), 0)

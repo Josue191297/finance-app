@@ -8,7 +8,7 @@ export default function ConfirmModal({ message, onConfirm, onCancel }) {
           <button onClick={onCancel}>Cancel</button>
           <button
             onClick={onConfirm}
-            style={{ marginLeft: 10, background: "#ff4d4f", color: "white" }}
+            style={{ marginLeft: 10, background: "var(--expense)", color: "white" }}
           >
             Delete
           </button>

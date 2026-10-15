@@ -8,7 +8,34 @@ import {
   onSnapshot,
 } from "firebase/firestore"
 import { householdId } from "../household"
-import { today } from "../money"
+import { today, isSavingsCategory } from "../money"
+import {
+  FiArrowUpRight,
+  FiArrowDownLeft,
+  FiPlus,
+  FiTrash2,
+  FiTag,
+} from "react-icons/fi"
+
+const emptyItem = () => ({ name: "", amount: "", category: "" })
+
+// Older "quick" transactions open as a receipt with one item.
+const initialItems = (expense) => {
+  if (!expense) return [emptyItem()]
+  if (expense.items?.length) {
+    return expense.items.map((item) => ({ ...item, amount: String(item.amount ?? "") }))
+  }
+  return [
+    {
+      name: expense.name || "",
+      amount: String(expense.amount ?? ""),
+      category: expense.category || "",
+    },
+  ]
+}
+
+const formatMoney = (value) =>
+  `₡${Number(value || 0).toLocaleString("en-US", { maximumFractionDigits: 2 })}`
 
 function AddExpense({
   categories = [],
@@ -17,37 +44,18 @@ function AddExpense({
   onAdd,
 }) {
   // The form is mounted fresh for each edit, so state starts from editingExpense.
-  const editingDetailed =
-    editingExpense?.transactionMode === "detailed" &&
-    editingExpense.items?.length > 0
-
-  const [name, setName] = useState(editingExpense?.name || "")
-  const [amount, setAmount] = useState(editingExpense?.amount || "")
-  const [category, setCategory] = useState(editingExpense?.category || "")
   const [type, setType] = useState(editingExpense?.type || "expense")
+  const [name, setName] = useState(editingExpense?.name || "")
   const [date, setDate] = useState(editingExpense?.date || today())
-  const [transactionMode, setTransactionMode] = useState(
-    editingDetailed ? "detailed" : "simple"
-  )
+  const [items, setItems] = useState(() => initialItems(editingExpense))
   const [savingGoals, setSavingGoals] = useState([])
   const [savingGoalId, setSavingGoalId] = useState(
     editingExpense?.savingGoalId || ""
   )
-
-  const [items, setItems] = useState(
-    editingDetailed
-      ? editingExpense.items
-      : [{ name: "", amount: "", category: "" }]
-  )
-
   const [newCategory, setNewCategory] = useState("")
   const [showAddCategory, setShowAddCategory] = useState(false)
-
-  const getItemsTotal = (itemsToTotal = items) =>
-    itemsToTotal.reduce((sum, item) => sum + Number(item.amount || 0), 0)
-
-  const isSavingsCategory = (value) =>
-    value?.trim().toLowerCase() === "savings"
+  const [error, setError] = useState("")
+  const [saving, setSaving] = useState(false)
 
   useEffect(() => {
     const unsubscribe = onSnapshot(
@@ -65,87 +73,31 @@ function AddExpense({
     return () => unsubscribe()
   }, [])
 
-  const filteredCategories = categories.filter(
+  const isIncome = type === "income"
+  const accent = isIncome ? "var(--income)" : "var(--expense)"
+  const total = items.reduce((sum, item) => sum + Number(item.amount || 0), 0)
+  const typeCategories = categories.filter(
     (cat) => (cat.type || "expense") === type
   )
+  const hasSavingsItem =
+    !isIncome && items.some((item) => isSavingsCategory(item.category))
 
   const handleTypeChange = (newType) => {
     if (newType === type) return
-
     setType(newType)
-    setCategory("")
     setSavingGoalId("")
-    setItems((prev) =>
-      prev.map((item) => ({
-        ...item,
-        category: "",
-      }))
-    )
+    setItems((prev) => prev.map((item) => ({ ...item, category: "" })))
     setShowAddCategory(false)
-  }
-
-  const handleCategoryChange = (value) => {
-    setCategory(value)
-
-    if (!isSavingsCategory(value)) {
-      setSavingGoalId("")
-    }
-  }
-
-  const handleTransactionModeChange = (newMode) => {
-    if (newMode === transactionMode) return
-
-    if (newMode === "detailed") {
-      const quickAmount = Number(amount || 0)
-
-      setItems([
-        {
-          name: name || "",
-          amount: quickAmount > 0 ? String(quickAmount) : "",
-          category,
-        },
-      ])
-    } else {
-      const total = getItemsTotal()
-      const usedCategories = [
-        ...new Set(items.map((item) => item.category).filter(Boolean)),
-      ]
-      const nextCategory =
-        usedCategories.length === 1 ? usedCategories[0] : category
-
-      setAmount(total > 0 ? String(total) : "")
-      setCategory(nextCategory)
-
-      if (!isSavingsCategory(nextCategory)) {
-        setSavingGoalId("")
-      }
-    }
-
-    setTransactionMode(newMode)
-    setShowAddCategory(false)
-  }
-
-  const addItem = () => {
-    setItems((prev) => [
-      ...prev,
-      { name: "", amount: "", category: "" },
-    ])
   }
 
   const updateItem = (index, field, value) => {
     setItems((prev) =>
-      prev.map((item, i) =>
-        i === index
-          ? { ...item, [field]: value }
-          : item
-      )
+      prev.map((item, i) => (i === index ? { ...item, [field]: value } : item))
     )
   }
 
   const removeItem = (index) => {
-    setItems((prev) =>
-      prev.filter((_, i) => i !== index)
-    )
+    setItems((prev) => prev.filter((_, i) => i !== index))
   }
 
   const createCategory = async () => {
@@ -153,476 +105,301 @@ function AddExpense({
     if (!categoryName) return
 
     try {
-      await addDoc(
-        collection(
-          db,
-          "households",
-          householdId,
-          "categories"
-        ),
-        {
-          name: categoryName,
-          type,
-          createdAt: Date.now(),
-        }
-      )
+      await addDoc(collection(db, "households", householdId, "categories"), {
+        name: categoryName,
+        type,
+        createdAt: Date.now(),
+      })
 
-      setCategory(categoryName)
-
-      if (!isSavingsCategory(categoryName)) {
-        setSavingGoalId("")
-      }
-
+      // Give the new category to every item that has none yet.
       setItems((prev) =>
         prev.map((item) =>
-          item.category
-            ? item
-            : { ...item, category: categoryName }
+          item.category ? item : { ...item, category: categoryName }
         )
       )
-
       setNewCategory("")
       setShowAddCategory(false)
-    } catch (error) {
-      console.error("Error creating category:", error)
-    }
-  }
-
-  const selectedSavingGoal = savingGoals.find(
-    (goal) => goal.id === savingGoalId
-  )
-
-  const buildSavingGoalFields = () => {
-    const shouldLinkSavingGoal =
-      type === "expense" &&
-      transactionMode === "simple" &&
-      isSavingsCategory(category)
-
-    return {
-      savingGoalId: shouldLinkSavingGoal ? savingGoalId || null : null,
-      savingGoalName: shouldLinkSavingGoal
-        ? selectedSavingGoal?.name || ""
-        : null,
+    } catch (err) {
+      console.error("Error creating category:", err)
+      setError("Could not create the category. Try again.")
     }
   }
 
   const handleSubmit = async (e) => {
     e.preventDefault()
+    setError("")
 
-    if (!name.trim()) return
-
-    let expenseData
-
-    if (transactionMode === "simple") {
-      if (!amount) return
-
-      expenseData = {
-        transactionMode: "simple",
-        name,
-        amount: Number(amount),
-        category,
-        type,
-        date,
-        items: null,
-        ...buildSavingGoalFields(),
-      }
-    } else {
-      const cleanedItems = items.filter(
-        (item) =>
-          item.name.trim() &&
-          Number(item.amount) > 0
-      )
-
-      if (cleanedItems.length === 0) return
-
-      expenseData = {
-        transactionMode: "detailed",
-        name,
-        category: null,
-        type,
-        date,
-        items: cleanedItems,
-        amount: getItemsTotal(cleanedItems),
-        savingGoalId: null,
-        savingGoalName: null,
-      }
+    const storeName = name.trim()
+    if (!storeName) {
+      setError(isIncome ? "Add where the money comes from." : "Add the store name.")
+      return
     }
 
+    const cleanedItems = items
+      .filter((item) => Number(item.amount) > 0)
+      .map((item) => ({
+        name: item.name.trim() || storeName,
+        amount: Number(item.amount),
+        category: item.category,
+      }))
+
+    if (cleanedItems.length === 0) {
+      setError("Add at least one item with an amount above 0.")
+      return
+    }
+
+    const selectedGoal = savingGoals.find((goal) => goal.id === savingGoalId)
+
+    const expenseData = {
+      transactionMode: "detailed",
+      name: storeName,
+      type,
+      date,
+      items: cleanedItems,
+      amount: cleanedItems.reduce((sum, item) => sum + item.amount, 0),
+      category: null,
+      savingGoalId: hasSavingsItem ? savingGoalId || null : null,
+      savingGoalName: hasSavingsItem ? selectedGoal?.name || "" : null,
+    }
+
+    setSaving(true)
     try {
       if (editingExpense) {
         await updateDoc(
-          doc(
-            db,
-            "households",
-            householdId,
-            "expenses",
-            editingExpense.id
-          ),
+          doc(db, "households", householdId, "expenses", editingExpense.id),
           expenseData
         )
       } else if (onAdd) {
         await onAdd(expenseData)
       } else {
         await addDoc(
-          collection(
-            db,
-            "households",
-            householdId,
-            "expenses"
-          ),
-          expenseData
+          collection(db, "households", householdId, "expenses"),
+          { ...expenseData, createdAt: Date.now() }
         )
       }
 
-      setName("")
-      setAmount("")
-      setCategory("")
-      setSavingGoalId("")
-      setType("expense")
-      setDate(today())
-      setTransactionMode("simple")
-      setItems([{ name: "", amount: "", category: "" }])
-      setShowAddCategory(false)
-
       if (onClose) onClose()
-    } catch (error) {
-      console.error("Error saving transaction:", error)
+    } catch (err) {
+      console.error("Error saving transaction:", err)
+      setError("Could not save. Check your connection and try again.")
+    } finally {
+      setSaving(false)
     }
   }
 
-  const detailedTotal = getItemsTotal()
-
   return (
-    <form onSubmit={handleSubmit} style={formStyle}>
+    <form onSubmit={handleSubmit} style={formStyle} noValidate>
       <h2 style={titleStyle}>
-        {editingExpense ? "Edit Transaction" : "Add Transaction"}
+        {editingExpense ? "Edit transaction" : "New transaction"}
       </h2>
 
-      <div style={modeRowStyle}>
-        <button
-          type="button"
-          style={{
-            ...modeButtonStyle,
-            background:
-              transactionMode === "simple"
-                ? "#1677ff"
-                : "var(--card)",
-            color:
-              transactionMode === "simple"
-                ? "white"
-                : "var(--text)",
-          }}
-          onClick={() =>
-            handleTransactionModeChange("simple")
-          }
-        >
-          Quick
-        </button>
-
-        <button
-          type="button"
-          style={{
-            ...modeButtonStyle,
-            background:
-              transactionMode === "detailed"
-                ? "#1677ff"
-                : "var(--card)",
-            color:
-              transactionMode === "detailed"
-                ? "white"
-                : "var(--text)",
-          }}
-          onClick={() =>
-            handleTransactionModeChange("detailed")
-          }
-        >
-          Detailed Receipt
-        </button>
-      </div>
-
-      <div style={modeRowStyle}>
-        <button
-          type="button"
-          style={{
-            ...modeButtonStyle,
-            background:
-              type === "expense"
-                ? "#ef4444"
-                : "var(--card)",
-            color:
-              type === "expense"
-                ? "white"
-                : "var(--text)",
-            border:
-              type === "expense"
-                ? "none"
-                : "1px solid var(--border)",
-          }}
-          onClick={() =>
-            handleTypeChange("expense")
-          }
-        >
-          Expense
-        </button>
-
-        <button
-          type="button"
-          style={{
-            ...modeButtonStyle,
-            background:
-              type === "income"
-                ? "#16a34a"
-                : "var(--card)",
-            color:
-              type === "income"
-                ? "white"
-                : "var(--text)",
-            border:
-              type === "income"
-                ? "none"
-                : "1px solid var(--border)",
-          }}
-          onClick={() =>
-            handleTypeChange("income")
-          }
-        >
-          Income
-        </button>
-      </div>
-
-      <input
-        type="text"
-        placeholder={
-          transactionMode === "simple"
-            ? "Name"
-            : "Store Name"
-        }
-        value={name}
-        onChange={(e) =>
-          setName(e.target.value)
-        }
-        style={inputStyle}
-      />
-
-      {transactionMode === "simple" && (
-        <>
-          <input
-            type="number"
-            placeholder="Amount"
-            value={amount}
-            onChange={(e) =>
-              setAmount(e.target.value)
-            }
-            style={inputStyle}
-          />
-
-          <div style={categoryRowStyle}>
-            <select
-              value={category}
-              onChange={(e) =>
-                handleCategoryChange(e.target.value)
-              }
-              style={selectStyle}
-            >
-              <option value="">
-                Select Category
-              </option>
-
-              {filteredCategories.map((cat) => (
-                <option
-                  key={cat.id}
-                  value={cat.name}
-                >
-                  {cat.name}
-                </option>
-              ))}
-            </select>
-
+      {/* TYPE */}
+      <div style={segmentStyle} role="group" aria-label="Transaction type">
+        {[
+          ["expense", "Expense", <FiArrowUpRight key="i" />, "var(--expense)"],
+          ["income", "Income", <FiArrowDownLeft key="i" />, "var(--income)"],
+        ].map(([value, label, icon, color]) => {
+          const active = type === value
+          return (
             <button
+              key={value}
               type="button"
-              style={quickAddButtonStyle}
-              onClick={() =>
-                setShowAddCategory(!showAddCategory)
-              }
-              title="New category"
+              aria-pressed={active}
+              onClick={() => handleTypeChange(value)}
+              style={{
+                ...segmentButtonStyle,
+                background: active ? "var(--card)" : "transparent",
+                color: active ? color : "var(--text-secondary)",
+                boxShadow: active ? "var(--shadow)" : "none",
+              }}
             >
-              +
+              {icon}
+              {label}
             </button>
-          </div>
+          )
+        })}
+      </div>
 
-          {type === "expense" && isSavingsCategory(category) && (
-            <select
-              value={savingGoalId}
-              onChange={(e) =>
-                setSavingGoalId(e.target.value)
-              }
-              style={selectStyle}
-            >
-              <option value="">
-                Select saving goal
-              </option>
-
-              {savingGoals.map((goal) => (
-                <option
-                  key={goal.id}
-                  value={goal.id}
-                >
-                  {goal.name}
-                </option>
-              ))}
-            </select>
-          )}
-        </>
-      )}
-
-      {showAddCategory && (
-        <div style={quickAddRowStyle}>
+      {/* STORE + DATE */}
+      <div style={fieldGridStyle}>
+        <label style={fieldStyle}>
+          <span style={labelStyle}>{isIncome ? "From" : "Store"}</span>
           <input
             type="text"
-            placeholder={`New ${type} category`}
-            value={newCategory}
-            onChange={(e) =>
-              setNewCategory(e.target.value)
-            }
-            style={inputStyle}
+            placeholder={isIncome ? "e.g. Salary, client" : "e.g. Walmart, Uber"}
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            autoFocus={!editingExpense}
           />
+        </label>
 
-          <button
-            type="button"
-            style={buttonStyle}
-            onClick={createCategory}
-          >
-            Add
-          </button>
+        <label style={fieldStyle}>
+          <span style={labelStyle}>Date</span>
+          <input
+            type="date"
+            required
+            value={date}
+            onChange={(e) => setDate(e.target.value)}
+          />
+        </label>
+      </div>
+
+      {/* ITEMS */}
+      <div style={fieldStyle}>
+        <div style={itemsHeaderStyle}>
+          <span style={labelStyle}>Items</span>
+          <span style={hintStyle}>
+            {items.length} {items.length === 1 ? "item" : "items"}
+          </span>
         </div>
-      )}
 
-      {transactionMode === "detailed" && (
-        <>
-          {items.map((item, index) => (
-            <div
-              key={index}
-              style={itemCardStyle}
-            >
-              <div style={detailItemRowStyle}>
+        {items.map((item, index) => (
+          <div key={index} style={itemCardStyle}>
+            <div style={itemTopRowStyle}>
+              <input
+                placeholder={index === 0 ? "What was it? (optional)" : "Item (optional)"}
+                aria-label={`Item ${index + 1} name`}
+                value={item.name}
+                onChange={(e) => updateItem(index, "name", e.target.value)}
+                style={{ minWidth: 0 }}
+              />
+              <div style={amountWrapStyle}>
+                <span style={currencyStyle} aria-hidden="true">₡</span>
                 <input
-                  style={detailNameInputStyle}
-                  placeholder="Item name"
-                  value={item.name}
-                  onChange={(e) =>
-                    updateItem(
-                      index,
-                      "name",
-                      e.target.value
-                    )
-                  }
-                />
-
-                <input
-                  style={detailAmountInputStyle}
                   type="number"
-                  placeholder="Amount"
+                  inputMode="decimal"
+                  min="0"
+                  placeholder="0"
+                  aria-label={`Item ${index + 1} amount`}
                   value={item.amount}
-                  onChange={(e) =>
-                    updateItem(
-                      index,
-                      "amount",
-                      e.target.value
-                    )
-                  }
+                  onChange={(e) => updateItem(index, "amount", e.target.value)}
+                  style={amountInputStyle}
                 />
+              </div>
+            </div>
 
+            <div style={itemBottomRowStyle}>
+              <div style={selectWrapStyle}>
+                <FiTag style={selectIconStyle} aria-hidden="true" />
                 <select
-                  style={detailCategorySelectStyle}
+                  aria-label={`Item ${index + 1} category`}
                   value={item.category}
-                  onChange={(e) =>
-                    updateItem(
-                      index,
-                      "category",
-                      e.target.value
-                    )
-                  }
+                  onChange={(e) => updateItem(index, "category", e.target.value)}
+                  style={selectStyle}
                 >
-                  <option value="">
-                    Category
-                  </option>
-
-                  {filteredCategories.map((cat) => (
-                    <option
-                      key={cat.id}
-                      value={cat.name}
-                    >
+                  <option value="">No category</option>
+                  {typeCategories.map((cat) => (
+                    <option key={cat.id} value={cat.name}>
                       {cat.name}
                     </option>
                   ))}
                 </select>
+              </div>
 
+              {items.length > 1 && (
                 <button
                   type="button"
-                  style={detailQuickAddButtonStyle}
-                  onClick={() =>
-                    setShowAddCategory(!showAddCategory)
-                  }
-                  title="New category"
+                  style={removeButtonStyle}
+                  onClick={() => removeItem(index)}
+                  title="Remove item"
+                  aria-label={`Remove item ${index + 1}`}
                 >
-                  +
+                  <FiTrash2 size={16} />
                 </button>
-
-                {items.length > 1 && (
-                  <button
-                    type="button"
-                    style={detailRemoveButtonStyle}
-                    onClick={() => removeItem(index)}
-                    title="Remove item"
-                  >
-                    ×
-                  </button>
-                )}
-              </div>
+              )}
             </div>
-          ))}
+          </div>
+        ))}
 
+        <div style={itemActionsStyle}>
           <button
             type="button"
-            style={buttonStyle}
-            onClick={addItem}
+            style={dashedButtonStyle}
+            onClick={() => setItems((prev) => [...prev, emptyItem()])}
           >
-            Add Item
+            <FiPlus /> Add item
           </button>
+          <button
+            type="button"
+            style={linkButtonStyle}
+            onClick={() => setShowAddCategory((open) => !open)}
+            aria-expanded={showAddCategory}
+          >
+            <FiTag /> New category
+          </button>
+        </div>
 
-          <div style={totalStyle}>
-            Total: ₡{detailedTotal.toLocaleString()}
+        {showAddCategory && (
+          <div style={newCategoryRowStyle}>
+            <input
+              type="text"
+              placeholder={`New ${type} category`}
+              aria-label={`New ${type} category`}
+              value={newCategory}
+              onChange={(e) => setNewCategory(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault()
+                  createCategory()
+                }
+              }}
+              autoFocus
+            />
+            <button type="button" style={smallPrimaryButtonStyle} onClick={createCategory}>
+              Add
+            </button>
           </div>
-        </>
+        )}
+      </div>
+
+      {/* SAVINGS GOAL */}
+      {hasSavingsItem && (
+        <label style={fieldStyle}>
+          <span style={labelStyle}>Savings goal</span>
+          <select
+            value={savingGoalId}
+            onChange={(e) => setSavingGoalId(e.target.value)}
+          >
+            <option value="">No goal</option>
+            {savingGoals.map((goal) => (
+              <option key={goal.id} value={goal.id}>
+                {goal.name}
+              </option>
+            ))}
+          </select>
+        </label>
       )}
 
-      <input
-        type="date"
-        required
-        value={date}
-        onChange={(e) =>
-          setDate(e.target.value)
-        }
-        style={inputStyle}
-      />
+      {error && (
+        <p style={errorStyle} role="alert">
+          {error}
+        </p>
+      )}
 
-      <div style={buttonRowStyle}>
-        {onClose && (
+      {/* FOOTER */}
+      <div style={footerStyle}>
+        <div>
+          <div style={hintStyle}>Total</div>
+          <div style={{ ...totalStyle, color: accent }}>
+            {isIncome ? "+" : "-"}
+            {formatMoney(total)}
+          </div>
+        </div>
+
+        <div style={footerButtonsStyle}>
+          {onClose && (
+            <button type="button" onClick={onClose} style={cancelButtonStyle}>
+              Cancel
+            </button>
+          )}
           <button
-            type="button"
-            onClick={onClose}
-            style={cancelButtonStyle}
+            type="submit"
+            disabled={saving}
+            style={{ ...saveButtonStyle, opacity: saving ? 0.6 : 1 }}
           >
-            Cancel
+            {saving ? "Saving..." : editingExpense ? "Save" : "Add"}
           </button>
-        )}
-
-        <button
-          type="submit"
-          style={buttonStyle}
-        >
-          {editingExpense ? "Update" : "Add"}
-        </button>
+        </div>
       </div>
     </form>
   )
@@ -640,145 +417,219 @@ const formStyle = {
 
 const titleStyle = {
   margin: 0,
+  paddingRight: 40,
+  fontSize: 22,
 }
 
-const inputStyle = {
-  padding: "12px 14px",
-  borderRadius: 10,
-  border: "1px solid var(--border)",
-  background: "var(--card)",
-  color: "var(--text)",
-  fontSize: 14,
-}
-
-const selectStyle = {
-  padding: "12px 14px",
-  borderRadius: 10,
-  border: "1px solid var(--border)",
-  background: "var(--card)",
-  color: "var(--text)",
-  fontSize: 14,
-  colorScheme: "dark light",
-}
-
-const buttonRowStyle = {
+const segmentStyle = {
   display: "flex",
-  justifyContent: "flex-end",
-  gap: 10,
+  gap: 4,
+  padding: 4,
+  borderRadius: 12,
+  background: "var(--track)",
 }
 
-const buttonStyle = {
-  padding: "12px 20px",
-  borderRadius: 10,
+const segmentButtonStyle = {
+  flex: 1,
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  gap: 6,
+  padding: "10px 12px",
   border: "none",
-  background: "#1677ff",
-  color: "white",
-  cursor: "pointer",
+  borderRadius: 9,
   fontWeight: 600,
 }
 
-const cancelButtonStyle = {
-  padding: "12px 20px",
-  borderRadius: 10,
-  border: "1px solid var(--border)",
-  background: "transparent",
-  color: "var(--text)",
-  cursor: "pointer",
+const fieldGridStyle = {
+  display: "grid",
+  gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))",
+  gap: 12,
 }
 
-const modeRowStyle = {
+const fieldStyle = {
   display: "flex",
-  gap: 10,
+  flexDirection: "column",
+  gap: 6,
+  minWidth: 0,
 }
 
-const modeButtonStyle = {
-  flex: 1,
-  padding: 12,
-  borderRadius: 10,
-  border: "1px solid var(--border)",
-  cursor: "pointer",
+const labelStyle = {
+  fontSize: 13,
+  fontWeight: 600,
+  color: "var(--text-secondary)",
 }
 
-const categoryRowStyle = {
-  display: "grid",
-  gridTemplateColumns: "1fr 48px",
-  gap: 10,
+const hintStyle = {
+  fontSize: 12,
+  color: "var(--text-secondary)",
 }
 
-const quickAddRowStyle = {
-  display: "grid",
-  gridTemplateColumns: "1fr auto",
-  gap: 10,
-}
-
-const quickAddButtonStyle = {
-  height: 46,
-  borderRadius: 10,
-  border: "none",
-  background: "#1677ff",
-  color: "white",
-  cursor: "pointer",
-  fontWeight: 700,
+const itemsHeaderStyle = {
+  display: "flex",
+  justifyContent: "space-between",
+  alignItems: "baseline",
 }
 
 const itemCardStyle = {
-  border: "1px solid var(--border)",
-  borderRadius: 12,
-  padding: 10,
   display: "flex",
   flexDirection: "column",
-  gap: 10,
+  gap: 8,
+  padding: 12,
+  borderRadius: 14,
+  border: "1px solid var(--border)",
+  background: "var(--bg)",
 }
 
-const detailItemRowStyle = {
+const itemTopRowStyle = {
   display: "grid",
-  gridTemplateColumns:
-    "minmax(120px, 1.4fr) minmax(80px, 0.8fr) minmax(110px, 1fr) 42px 42px",
+  gridTemplateColumns: "1fr 130px",
+  gap: 8,
+}
+
+const itemBottomRowStyle = {
+  display: "flex",
   gap: 8,
   alignItems: "center",
 }
 
-const detailNameInputStyle = {
-  ...inputStyle,
+const amountWrapStyle = {
+  position: "relative",
+}
+
+const currencyStyle = {
+  position: "absolute",
+  left: 12,
+  top: "50%",
+  transform: "translateY(-50%)",
+  color: "var(--text-secondary)",
+  pointerEvents: "none",
+}
+
+const amountInputStyle = {
+  paddingLeft: 26,
+  fontWeight: 600,
+  textAlign: "right",
+}
+
+const selectWrapStyle = {
+  position: "relative",
+  flex: 1,
   minWidth: 0,
 }
 
-const detailAmountInputStyle = {
-  ...inputStyle,
-  minWidth: 0,
+const selectIconStyle = {
+  position: "absolute",
+  left: 12,
+  top: "50%",
+  transform: "translateY(-50%)",
+  color: "var(--text-secondary)",
+  pointerEvents: "none",
 }
 
-const detailCategorySelectStyle = {
-  ...selectStyle,
-  minWidth: 0,
-}
-
-const detailQuickAddButtonStyle = {
-  height: 42,
-  width: 42,
-  padding: 0,
-  borderRadius: 8,
-  border: "none",
-  background: "#1677ff",
-  color: "white",
+const selectStyle = {
+  paddingLeft: 34,
   cursor: "pointer",
-  fontWeight: 700,
 }
 
-const detailRemoveButtonStyle = {
-  height: 42,
+const removeButtonStyle = {
   width: 42,
+  height: 42,
+  flexShrink: 0,
   padding: 0,
-  borderRadius: 8,
+  display: "grid",
+  placeItems: "center",
   border: "none",
-  background: "#ef4444",
+  borderRadius: 10,
+  background: "var(--expense-soft)",
+  color: "var(--expense)",
+}
+
+const itemActionsStyle = {
+  display: "flex",
+  gap: 10,
+  flexWrap: "wrap",
+}
+
+const dashedButtonStyle = {
+  flex: 1,
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  gap: 6,
+  padding: 11,
+  border: "1.5px dashed var(--border)",
+  background: "transparent",
+  color: "var(--primary)",
+  fontWeight: 600,
+}
+
+const linkButtonStyle = {
+  display: "flex",
+  alignItems: "center",
+  gap: 6,
+  padding: "11px 12px",
+  border: "none",
+  background: "transparent",
+  color: "var(--text-secondary)",
+  fontWeight: 500,
+}
+
+const newCategoryRowStyle = {
+  display: "grid",
+  gridTemplateColumns: "1fr auto",
+  gap: 8,
+}
+
+const smallPrimaryButtonStyle = {
+  border: "none",
+  background: "var(--primary)",
   color: "white",
-  cursor: "pointer",
-  fontSize: 18,
-  lineHeight: 1,
+  fontWeight: 600,
+}
+
+const errorStyle = {
+  margin: 0,
+  padding: "10px 12px",
+  borderRadius: 10,
+  background: "var(--expense-soft)",
+  color: "var(--expense)",
+  fontSize: 14,
+  fontWeight: 500,
+}
+
+const footerStyle = {
+  position: "sticky",
+  bottom: 0,
+  margin: "0 -24px -24px",
+  padding: "14px 24px 18px",
+  display: "flex",
+  justifyContent: "space-between",
+  alignItems: "center",
+  gap: 12,
+  background: "var(--card)",
+  borderTop: "1px solid var(--border)",
 }
 
 const totalStyle = {
-  fontWeight: "bold",
-  fontSize: 18,
+  fontSize: 22,
+  fontWeight: 700,
+  lineHeight: 1.2,
+}
+
+const footerButtonsStyle = {
+  display: "flex",
+  gap: 8,
+}
+
+const cancelButtonStyle = {
+  background: "transparent",
+}
+
+const saveButtonStyle = {
+  border: "none",
+  background: "var(--primary)",
+  color: "white",
+  fontWeight: 600,
+  padding: "0.6em 1.6em",
 }

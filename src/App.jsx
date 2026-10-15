@@ -84,7 +84,15 @@ function App() {
     const unsubCategories = onSnapshot(
       collection(db, "households", householdId, "categories"),
       snapshot => {
-        setCategories(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })))
+        // Drag-and-drop order from Settings; categories never reordered keep creation order.
+        setCategories(
+          snapshot.docs
+            .map(doc => ({ id: doc.id, ...doc.data() }))
+            .sort((a, b) =>
+              (a.order ?? Infinity) - (b.order ?? Infinity) ||
+              (a.createdAt || 0) - (b.createdAt || 0)
+            )
+        )
       }
     )
 
@@ -167,6 +175,8 @@ function App() {
 
             <button
               style={{ ...miniFab, marginTop: 10 }}
+              title="Add transaction"
+              aria-label="Add transaction"
               onClick={() => {setShowExpenseModal(true)
                 setFabOpen(false)
               }}
@@ -176,6 +186,8 @@ function App() {
 
             <button
               style={{ ...miniFab, marginTop: 10 }}
+              title="Add upcoming payment"
+              aria-label="Add upcoming payment"
               onClick={() => {setShowFutureExpenseModal(true)
                 setFabOpen(false)
               }}
@@ -187,6 +199,7 @@ function App() {
 
         <button
           style={mainFab}
+          aria-label="Add"
           onClick={() => setFabOpen(prev => !prev)}
         >
           <FiPlus size={24} />
@@ -244,11 +257,11 @@ function App() {
       {/* NAV */}
 
       <nav style={navStyle}>
-        <NavItem to="/" icon={<FiHome />} />
-        <NavItem to="/summary" icon={<FiBarChart2 />} />
-        <NavItem to="/future" icon={<FiDollarSign />} />
-        <NavItem to="/goals" icon={<FiTarget />} />
-        <NavItem to="/settings" icon={<FiSettings />} />
+        <NavItem to="/" icon={<FiHome />} label="Home" />
+        <NavItem to="/summary" icon={<FiBarChart2 />} label="Summary" />
+        <NavItem to="/future" icon={<FiCalendar />} label="Upcoming" />
+        <NavItem to="/goals" icon={<FiTarget />} label="Goals" />
+        <NavItem to="/settings" icon={<FiSettings />} label="Settings" />
       </nav>
     </div>
   )
@@ -281,22 +294,30 @@ const miniFabContainer = {
 }
 
 const miniFab = {
-  width: 45,
-  height: 45,
+  width: 46,
+  height: 46,
+  padding: 0,
+  display: "grid",
+  placeItems: "center",
   borderRadius: "50%",
   border: "none",
-  background: "#1677ff",
-  color: "white",
+  background: "var(--card)",
+  color: "var(--primary)",
+  boxShadow: "var(--shadow)",
   cursor: "pointer"
 }
 
 const mainFab = {
-  width: 55,
-  height: 55,
+  width: 56,
+  height: 56,
+  padding: 0,
+  display: "grid",
+  placeItems: "center",
   borderRadius: "50%",
   border: "none",
-  background: "#1677ff",
+  background: "var(--primary)",
   color: "white",
+  boxShadow: "0 6px 18px rgba(37, 99, 235, 0.35)",
   cursor: "pointer"
 }
 
@@ -305,12 +326,14 @@ const navStyle = {
   bottom: 0,
   left: 0,
   right: 0,
-  height: 60,
+  height: 64,
+  paddingBottom: "env(safe-area-inset-bottom)",
   background: "var(--card)",
   borderTop: "1px solid var(--border)",
   display: "flex",
   justifyContent: "space-around",
-  alignItems: "center"
+  alignItems: "center",
+  zIndex: 100
 }
 
 const overlayStyle = {
@@ -354,17 +377,24 @@ const closeButtonStyle = {
   zIndex: 10
 }
 
-function NavItem({ to, icon }) {
+function NavItem({ to, icon, label }) {
   return (
     <NavLink
       to={to}
+      end
       style={({ isActive }) => ({
-        color: isActive ? "#1677ff" : "var(--text)",
-        fontSize: 22,
-        position: "relative"
+        color: isActive ? "var(--primary)" : "var(--text-secondary)",
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        gap: 2,
+        minWidth: 56,
+        fontSize: 11,
+        fontWeight: isActive ? 600 : 500
       })}
     >
-      {icon}
+      <span style={{ fontSize: 21, lineHeight: 1 }}>{icon}</span>
+      {label}
     </NavLink>
   )
 }

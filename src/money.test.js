@@ -1,6 +1,19 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { addMonth, toDateInput, totalsByCategory, expenseTotal, sumByType } from "./money.js"
+import { addMonth, toDateInput, totalsByCategory, expenseTotal, sumByType, savingsAmount } from "./money.js"
+
+test("savingsAmount counts only the Savings lines of a receipt", () => {
+  const receipt = {
+    type: "expense",
+    transactionMode: "detailed",
+    items: [
+      { name: "Transfer", amount: "50000", category: " savings " },
+      { name: "Fee", amount: "500", category: "Bank" },
+    ],
+  }
+  assert.equal(savingsAmount(receipt), 50000)
+  assert.equal(savingsAmount({ type: "expense", transactionMode: "simple", amount: 7000 }), 7000)
+})
 
 test("addMonth keeps the day and caps it at month end", () => {
   assert.equal(addMonth("2026-01-15"), "2026-02-15")

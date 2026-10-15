@@ -10,6 +10,7 @@ function FutureExpenseForm({
   onSave,
 }) {
   // The form is mounted fresh for each edit, so state starts from editingExpense.
+  const [type, setType] = useState(editingExpense?.type || "expense")
   const [name, setName] = useState(editingExpense?.name || "")
   const [amount, setAmount] = useState(editingExpense?.amount || "")
   const [category, setCategory] = useState(editingExpense?.category || "")
@@ -22,7 +23,18 @@ function FutureExpenseForm({
     editingExpense?.monthsRemaining || ""
   )
 
+  const typeCategories = categories.filter(
+    (cat) => (cat.type || "expense") === type
+  )
+
+  const changeType = (newType) => {
+    if (newType === type) return
+    setType(newType)
+    setCategory("")
+  }
+
   const resetForm = () => {
+    setType("expense")
     setName("")
     setAmount("")
     setCategory("")
@@ -46,6 +58,7 @@ function FutureExpenseForm({
     }
 
     const data = {
+      type,
       name: name.trim(),
       amount: Number(amount),
       category,
@@ -85,8 +98,30 @@ function FutureExpenseForm({
   return (
     <form onSubmit={handleSubmit} style={formStyle}>
       <h2 style={titleStyle}>
-        {editingExpense ? "Edit Future Expense" : "Add Future Expense"}
+        {editingExpense ? "Edit upcoming payment" : "Add upcoming payment"}
       </h2>
+
+      <div style={typeRowStyle} role="group" aria-label="Payment type">
+        {[
+          ["expense", "Expense", "var(--expense)"],
+          ["income", "Income", "var(--income)"],
+        ].map(([value, label, color]) => (
+          <button
+            key={value}
+            type="button"
+            aria-pressed={type === value}
+            onClick={() => changeType(value)}
+            style={{
+              ...typeButtonStyle,
+              background: type === value ? color : "transparent",
+              color: type === value ? "white" : "var(--text)",
+              borderColor: type === value ? color : "var(--border)",
+            }}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
 
       <input
         type="text"
@@ -104,7 +139,7 @@ function FutureExpenseForm({
         style={inputStyle}
       />
 
-      {categories.length > 0 ? (
+      {typeCategories.length > 0 ? (
         <select
           value={category}
           onChange={(e) => setCategory(e.target.value)}
@@ -112,15 +147,15 @@ function FutureExpenseForm({
         >
           <option value="">Select Category</option>
 
-          {categories.map((cat) => (
+          {typeCategories.map((cat) => (
             <option key={cat.id} value={cat.name}>
               {cat.name}
             </option>
           ))}
         </select>
       ) : (
-        <p style={{ opacity: 0.6 }}>
-          No categories available.
+        <p style={{ margin: 0, color: "var(--text-secondary)" }}>
+          No {type} categories yet. Add them in Settings.
         </p>
       )}
 
@@ -131,17 +166,14 @@ function FutureExpenseForm({
         style={inputStyle}
       />
 
-      <div
-        style={checkboxContainer}
-        onClick={() => setRecurring(!recurring)}
-      >
+      <label style={checkboxContainer}>
         <input
           type="checkbox"
           checked={recurring}
-          readOnly
+          onChange={(e) => setRecurring(e.target.checked)}
         />
-        <span>Recurring monthly</span>
-      </div>
+        <span>Repeats every month</span>
+      </label>
 
       {recurring && (
         <>
@@ -214,11 +246,24 @@ const buttonStyle = {
   padding: 14,
   borderRadius: 10,
   border: "none",
-  background: "#1677ff",
+  background: "var(--primary)",
   color: "white",
   cursor: "pointer",
   fontWeight: 500,
   marginTop: 10,
+}
+
+const typeRowStyle = {
+  display: "flex",
+  gap: 10,
+}
+
+const typeButtonStyle = {
+  flex: 1,
+  padding: 12,
+  borderRadius: 10,
+  border: "1px solid var(--border)",
+  fontWeight: 600,
 }
 
 const checkboxContainer = {

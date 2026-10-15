@@ -9,6 +9,7 @@ import {
 } from "firebase/firestore"
 import { db } from "../firebase"
 import { householdId } from "../household"
+import { savingsAmount } from "../money"
 import { FiEdit2, FiX } from "react-icons/fi"
 
 function SavingsGoals({ expenses }) {
@@ -162,8 +163,7 @@ function SavingsGoals({ expenses }) {
             expense.savingGoalId === goal.id
         )
         .reduce(
-          (sum, expense) =>
-            sum + Number(expense.amount || 0),
+          (sum, expense) => sum + savingsAmount(expense),
           0
         )
 
@@ -484,7 +484,7 @@ const modalTitleStyle = {
 const addTextButtonStyle = {
   border: "none",
   background: "transparent",
-  color: "#1677ff",
+  color: "var(--primary)",
   cursor: "pointer",
   fontSize: 15,
   fontWeight: 600,
@@ -558,7 +558,7 @@ const progressTrackStyle = {
 
 const progressFillStyle = {
   height: "100%",
-  background: "#16a34a",
+  background: "var(--income)",
 }
 
 const overlayStyle = {
@@ -586,7 +586,7 @@ const modalStyle = {
 
 const deleteButtonStyle = {
   marginLeft: 10,
-  background: "#ff4d4f",
+  background: "var(--expense)",
   color: "white",
   border: "none",
   padding: "6px 12px",
@@ -621,7 +621,7 @@ const buttonStyle = {
   padding: "12px 20px",
   borderRadius: 10,
   border: "none",
-  background: "#1677ff",
+  background: "var(--primary)",
   color: "white",
   cursor: "pointer",
   fontWeight: 600,
