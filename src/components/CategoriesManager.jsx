@@ -1,11 +1,12 @@
 import { useRef, useState } from "react"
 import { FiEdit2, FiTrash2, FiPlus, FiMenu } from "react-icons/fi"
-import { collection, addDoc, deleteDoc, doc, getDocs, writeBatch } from "firebase/firestore"
-import { db } from "../firebase"
+import { collection, addDoc, deleteDoc, doc, getDocs, query, where, writeBatch } from "firebase/firestore"
+import { db, saveInBackground } from "../firebase"
 import { householdId } from "../household"
+import { categoryUseCount } from "../money"
 import ConfirmModal from "./ConfirmModal"
 
-export default function CategoriesManager({ categories = [] }) {
+export default function CategoriesManager({ categories = [], expenses = [] }) {
   const [newCategory, setNewCategory] = useState({ expense: "", income: "" })
   const [editingId, setEditingId] = useState(null)
   const [editingValue, setEditingValue] = useState("")
@@ -21,37 +22,29 @@ export default function CategoriesManager({ categories = [] }) {
     (cat) => (cat.type || "expense") === "income"
   )
 
-  const addCategory = async (type) => {
+  const addCategory = (type) => {
     const name = newCategory[type].trim()
     if (!name) return
 
-    try {
-      await addDoc(
-        collection(db, "households", householdId, "categories"),
-        {
-          name,
-          type,
-          createdAt: Date.now(),
-        }
-      )
-      setNewCategory((prev) => ({ ...prev, [type]: "" }))
-    } catch (error) {
-      console.error("Error adding category:", error)
-    }
+    saveInBackground(
+      addDoc(collection(db, "households", householdId, "categories"), {
+        name,
+        type,
+        createdAt: Date.now(),
+      }),
+      "category"
+    )
+    setNewCategory((prev) => ({ ...prev, [type]: "" }))
   }
 
   /* ---------- REORDER (pointer drag works with mouse and touch) ---------- */
 
-  const saveOrder = async (ids) => {
+  const saveOrder = (ids) => {
     const batch = writeBatch(db)
     ids.forEach((id, index) =>
       batch.update(doc(db, "households", householdId, "categories", id), { order: index })
     )
-    try {
-      await batch.commit()
-    } catch (error) {
-      console.error("Error saving category order:", error)
-    }
+    saveInBackground(batch.commit(), "category order")
   }
 
   const startDrag = (e, type, list, id) => {
@@ -124,25 +117,41 @@ export default function CategoriesManager({ categories = [] }) {
         })
       }
 
-      await batch.commit()
+      saveInBackground(batch.commit(), "category rename")
       cancelEdit()
     } catch (error) {
       console.error("Error editing category:", error)
     }
   }
 
-  const confirmDelete = async () => {
-    if (!categoryToDelete) return
-
+  // Deleting a category in use would leave transactions pointing at a name that no longer
+  // exists, so count its uses first and only offer the delete when there are none.
+  const requestDelete = async (cat) => {
+    const type = cat.type || "expense"
+    let upcoming = 0
     try {
-      await deleteDoc(
-        doc(db, "households", householdId, "categories", categoryToDelete.id)
+      const snapshot = await getDocs(
+        query(
+          collection(db, "households", householdId, "futureExpenses"),
+          where("category", "==", cat.name)
+        )
       )
-      setCategoryToDelete(null)
+      upcoming = snapshot.docs.filter((d) => (d.data().type || "expense") === type).length
     } catch (error) {
-      console.error("Error deleting category:", error)
+      console.error("Error checking upcoming payments:", error)
     }
+    setCategoryToDelete({ ...cat, used: categoryUseCount(expenses, cat.name, type), upcoming })
   }
+
+  const confirmDelete = () => {
+    saveInBackground(
+      deleteDoc(doc(db, "households", householdId, "categories", categoryToDelete.id)),
+      "category deletion"
+    )
+    setCategoryToDelete(null)
+  }
+
+  const plural = (count, word) => `${count} ${word}${count === 1 ? "" : "s"}`
 
   const renderCategoryList = (list, type, emptyMessage) => {
     const shown =
@@ -202,6 +211,9 @@ export default function CategoriesManager({ categories = [] }) {
                     <FiMenu />
                   </button>
                   <span style={categoryTextStyle}>{cat.name}</span>
+                  <span style={useCountStyle}>
+                    {plural(categoryUseCount(expenses, cat.name, type), "use")}
+                  </span>
                 </div>
 
                 <div style={actionsStyle}>
@@ -215,7 +227,7 @@ export default function CategoriesManager({ categories = [] }) {
                   </button>
 
                   <button
-                    onClick={() => setCategoryToDelete(cat)}
+                    onClick={() => requestDelete(cat)}
                     style={{ ...iconBtn, color: "var(--expense)" }}
                     aria-label={`Delete ${cat.name}`}
                     title="Delete"
@@ -286,13 +298,26 @@ export default function CategoriesManager({ categories = [] }) {
         {renderCategoryList(incomeCategories, "income", "No income categories yet.")}
       </section>
 
-      {categoryToDelete && (
-        <ConfirmModal
-          message={`Are you sure you want to delete "${categoryToDelete.name}"?`}
-          onConfirm={confirmDelete}
-          onCancel={() => setCategoryToDelete(null)}
-        />
-      )}
+      {categoryToDelete &&
+        (categoryToDelete.used + categoryToDelete.upcoming > 0 ? (
+          <ConfirmModal
+            title={`Can't delete "${categoryToDelete.name}"`}
+            message={`It is used by ${[
+              categoryToDelete.used > 0 && plural(categoryToDelete.used, "transaction"),
+              categoryToDelete.upcoming > 0 && plural(categoryToDelete.upcoming, "upcoming payment"),
+            ]
+              .filter(Boolean)
+              .join(" and ")}. Rename it instead, or move those to another category first.`}
+            onCancel={() => setCategoryToDelete(null)}
+          />
+        ) : (
+          <ConfirmModal
+            title={`Delete "${categoryToDelete.name}"?`}
+            message="No transactions use it, so nothing else changes."
+            onConfirm={confirmDelete}
+            onCancel={() => setCategoryToDelete(null)}
+          />
+        ))}
     </div>
   )
 }
@@ -311,6 +336,7 @@ const rowStyle = { display: "flex", justifyContent: "space-between", alignItems:
 const draggingRowStyle = { position: "relative", zIndex: 1, borderColor: "var(--primary)", boxShadow: "0 8px 24px rgba(0,0,0,0.18)", transform: "scale(1.02)" }
 const categoryNameStyle = { display: "flex", alignItems: "center", gap: 6, minWidth: 0 }
 const categoryTextStyle = { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }
+const useCountStyle = { flexShrink: 0, marginLeft: 4, fontSize: 12, color: "var(--text-secondary)" }
 const handleStyle = { width: 40, height: 40, padding: 0, flexShrink: 0, display: "grid", placeItems: "center", border: "none", background: "transparent", color: "var(--text-secondary)", touchAction: "none" }
 const actionsStyle = { display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }
 const iconBtn = { width: 32, height: 32, background: "transparent", border: "none", cursor: "pointer", color: "var(--text)", display: "flex", alignItems: "center", justifyContent: "center" }

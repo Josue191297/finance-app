@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react"
-import { db } from "../firebase"
+import { db, saveInBackground } from "../firebase"
 import {
   addDoc,
   updateDoc,
@@ -8,7 +8,7 @@ import {
   onSnapshot,
 } from "firebase/firestore"
 import { householdId } from "../household"
-import { today, isSavingsCategory } from "../money"
+import { today, isSavingsCategory, formatMoney } from "../money"
 import {
   FiArrowUpRight,
   FiArrowDownLeft,
@@ -35,14 +35,10 @@ const initialItems = (expense) => {
   ]
 }
 
-const formatMoney = (value) =>
-  `₡${Number(value || 0).toLocaleString("en-US", { maximumFractionDigits: 2 })}`
-
 function AddExpense({
   categories = [],
   editingExpense,
   onClose,
-  onAdd,
 }) {
   // The form is mounted fresh for each edit, so state starts from editingExpense.
   const [type, setType] = useState(editingExpense?.type || "expense")
@@ -56,7 +52,6 @@ function AddExpense({
   const [newCategory, setNewCategory] = useState("")
   const [showAddCategory, setShowAddCategory] = useState(false)
   const [error, setError] = useState("")
-  const [saving, setSaving] = useState(false)
 
   useEffect(() => {
     const unsubscribe = onSnapshot(
@@ -101,32 +96,30 @@ function AddExpense({
     setItems((prev) => prev.filter((_, i) => i !== index))
   }
 
-  const createCategory = async () => {
+  const createCategory = () => {
     const categoryName = newCategory.trim()
     if (!categoryName) return
 
-    try {
-      await addDoc(collection(db, "households", householdId, "categories"), {
+    saveInBackground(
+      addDoc(collection(db, "households", householdId, "categories"), {
         name: categoryName,
         type,
         createdAt: Date.now(),
-      })
+      }),
+      "category"
+    )
 
-      // Give the new category to every item that has none yet.
-      setItems((prev) =>
-        prev.map((item) =>
-          item.category ? item : { ...item, category: categoryName }
-        )
+    // Give the new category to every item that has none yet.
+    setItems((prev) =>
+      prev.map((item) =>
+        item.category ? item : { ...item, category: categoryName }
       )
-      setNewCategory("")
-      setShowAddCategory(false)
-    } catch (err) {
-      console.error("Error creating category:", err)
-      setError("Could not create the category. Try again.")
-    }
+    )
+    setNewCategory("")
+    setShowAddCategory(false)
   }
 
-  const handleSubmit = async (e) => {
+  const handleSubmit = (e) => {
     e.preventDefault()
     setError("")
 
@@ -165,29 +158,20 @@ function AddExpense({
       needsReview: false,
     }
 
-    setSaving(true)
-    try {
-      if (editingExpense) {
-        await updateDoc(
-          doc(db, "households", householdId, "expenses", editingExpense.id),
-          expenseData
-        )
-      } else if (onAdd) {
-        await onAdd(expenseData)
-      } else {
-        await addDoc(
-          collection(db, "households", householdId, "expenses"),
-          { ...expenseData, createdAt: Date.now() }
-        )
-      }
+    saveInBackground(
+      editingExpense
+        ? updateDoc(
+            doc(db, "households", householdId, "expenses", editingExpense.id),
+            expenseData
+          )
+        : addDoc(collection(db, "households", householdId, "expenses"), {
+            ...expenseData,
+            createdAt: Date.now(),
+          }),
+      "transaction"
+    )
 
-      if (onClose) onClose()
-    } catch (err) {
-      console.error("Error saving transaction:", err)
-      setError("Could not save. Check your connection and try again.")
-    } finally {
-      setSaving(false)
-    }
+    if (onClose) onClose()
   }
 
   return (
@@ -407,10 +391,9 @@ function AddExpense({
           )}
           <button
             type="submit"
-            disabled={saving}
-            style={{ ...saveButtonStyle, opacity: saving ? 0.6 : 1 }}
+            style={saveButtonStyle}
           >
-            {saving ? "Saving..." : editingExpense ? "Save" : "Add"}
+            {editingExpense ? "Save" : "Add"}
           </button>
         </div>
       </div>

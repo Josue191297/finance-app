@@ -7,17 +7,65 @@ import {
   updateDoc,
   writeBatch,
 } from "firebase/firestore"
-import { db } from "../firebase"
+import { db, saveInBackground } from "../firebase"
 import { householdId } from "../household"
 import { FiCheck, FiX, FiEdit } from "react-icons/fi"
 import FutureExpenseForm from "./FutureExpenseForm"
-import { parseLocalDate, addMonth, today } from "../money"
+import { parseLocalDate, addMonth, today, formatMoney } from "../money"
+
+// Records the payment and creates next month's copy of a recurring one, in one atomic batch.
+function markAsPaid(expense) {
+  // Fixed doc ids make a repeat tap (or a second phone) overwrite instead of duplicating.
+  const batch = writeBatch(db)
+  const futureExpenses = collection(db, "households", householdId, "futureExpenses")
+
+  batch.set(doc(db, "households", householdId, "expenses", `paid-${expense.id}`), {
+    transactionMode: "detailed",
+    name: expense.name,
+    amount: Number(expense.amount),
+    category: null,
+    items: [
+      { name: expense.name, amount: Number(expense.amount), category: expense.category || "" },
+    ],
+    type: expense.type || "expense",
+    date: today(),
+    createdAt: Date.now(),
+  })
+
+  if (expense.recurring) {
+    const recurringMode = expense.recurringMode || "forever"
+    const isForever = recurringMode === "forever"
+    const monthsRemaining = Number(expense.monthsRemaining || 0)
+    const shouldCreateNext = isForever || monthsRemaining > 1
+    const nextDate = addMonth(expense.dueDate)
+    const seriesId = expense.seriesId || expense.id
+
+    if (shouldCreateNext && nextDate) {
+      batch.set(doc(futureExpenses, `${seriesId}-${nextDate}`), {
+        type: expense.type || "expense",
+        name: expense.name,
+        amount: expense.amount,
+        category: expense.category,
+        dueDate: nextDate,
+        recurring: true,
+        frequency: "monthly",
+        recurringMode,
+        monthsRemaining: isForever ? null : monthsRemaining - 1,
+        seriesId,
+        createdAt: Date.now(),
+      })
+    }
+  }
+
+  batch.delete(doc(futureExpenses, expense.id))
+
+  saveInBackground(batch.commit(), "payment")
+}
 
 function FutureExpenses({ categories = [] }) {
   const [expenses, setExpenses] = useState([])
   const [expenseToDelete, setExpenseToDelete] = useState(null)
   const [expenseToEdit, setExpenseToEdit] = useState(null)
-  const [processingId, setProcessingId] = useState(null)
 
   useEffect(() => {
     const unsub = onSnapshot(
@@ -91,80 +139,18 @@ function FutureExpenses({ categories = [] }) {
       .filter((expense) => isIncome(expense) === income)
       .reduce((sum, expense) => sum + Number(expense.amount || 0), 0)
 
-  const formatMoney = (value) =>
-    `₡${Number(value || 0).toLocaleString("en-US", { maximumFractionDigits: 2 })}`
-
-  const markAsPaid = async (expense) => {
-    if (processingId === expense.id) return
-    setProcessingId(expense.id)
-
-    // Fixed doc ids make a repeat tap (or a second phone) overwrite instead of duplicating.
-    const batch = writeBatch(db)
-    const futureExpenses = collection(db, "households", householdId, "futureExpenses")
-
-    batch.set(doc(db, "households", householdId, "expenses", `paid-${expense.id}`), {
-      transactionMode: "detailed",
-      name: expense.name,
-      amount: Number(expense.amount),
-      category: null,
-      items: [
-        { name: expense.name, amount: Number(expense.amount), category: expense.category || "" },
-      ],
-      type: expense.type || "expense",
-      date: today(),
-      createdAt: Date.now(),
-    })
-
-    if (expense.recurring) {
-      const recurringMode = expense.recurringMode || "forever"
-      const isForever = recurringMode === "forever"
-      const monthsRemaining = Number(expense.monthsRemaining || 0)
-      const shouldCreateNext = isForever || monthsRemaining > 1
-      const nextDate = addMonth(expense.dueDate)
-      const seriesId = expense.seriesId || expense.id
-
-      if (shouldCreateNext && nextDate) {
-        batch.set(doc(futureExpenses, `${seriesId}-${nextDate}`), {
-          type: expense.type || "expense",
-          name: expense.name,
-          amount: expense.amount,
-          category: expense.category,
-          dueDate: nextDate,
-          recurring: true,
-          frequency: "monthly",
-          recurringMode,
-          monthsRemaining: isForever ? null : monthsRemaining - 1,
-          seriesId,
-          createdAt: Date.now(),
-        })
-      }
-    }
-
-    batch.delete(doc(futureExpenses, expense.id))
-
-    try {
-      await batch.commit()
-    } catch (error) {
-      console.error("Error marking as paid:", error)
-    } finally {
-      setProcessingId(null)
-    }
+  const confirmDelete = () => {
+    saveInBackground(
+      deleteDoc(doc(db, "households", householdId, "futureExpenses", expenseToDelete.id)),
+      "deletion"
+    )
+    setExpenseToDelete(null)
   }
 
-  const confirmDelete = async () => {
-    try {
-      await deleteDoc(
-        doc(db, "households", householdId, "futureExpenses", expenseToDelete.id)
-      )
-      setExpenseToDelete(null)
-    } catch (error) {
-      console.error("Delete error:", error)
-    }
-  }
-
-  const handleSaveEdit = async (updatedExpense) => {
-    try {
-      await updateDoc(
+  // The form closes itself after calling this.
+  const handleSaveEdit = (updatedExpense) => {
+    saveInBackground(
+      updateDoc(
         doc(db, "households", householdId, "futureExpenses", updatedExpense.id),
         {
           type: updatedExpense.type || "expense",
@@ -183,12 +169,9 @@ function FutureExpenses({ categories = [] }) {
               ? Number(updatedExpense.monthsRemaining || 1)
               : null,
         }
-      )
-
-      setExpenseToEdit(null)
-    } catch (error) {
-      console.error("Edit error:", error)
-    }
+      ),
+      "upcoming payment"
+    )
   }
 
   return (
@@ -236,7 +219,6 @@ function FutureExpenses({ categories = [] }) {
                   <div style={iconRowStyle}>
                     <button
                       style={{ ...iconButtonStyle, color: "var(--income)" }}
-                      disabled={processingId === expense.id}
                       onClick={() => markAsPaid(expense)}
                       title={income ? "Mark as received" : "Mark as paid"}
                       aria-label={income ? "Mark as received" : "Mark as paid"}

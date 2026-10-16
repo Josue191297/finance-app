@@ -84,18 +84,29 @@ function firestore(method, path, body) {
     payload: body ? JSON.stringify(body) : undefined,
     muteHttpExceptions: true,
   })
-  return { code: response.getResponseCode(), json: JSON.parse(response.getContentText() || "null") }
+  const text = response.getContentText()
+  if (text.indexOf("ACCESS_TOKEN_SCOPE_INSUFFICIENT") !== -1) {
+    throw new Error(
+      "No permission for Firestore yet. Replace appsscript.json with the one from the repo " +
+        "(it lists the datastore scope), save, run again and approve the new permission."
+    )
+  }
+  return { code: response.getResponseCode(), json: JSON.parse(text || "null") }
 }
 
 // Category from the most recent earlier transaction at the same store, or "".
 function findCategory(parsed) {
-  const query = (fieldPath, value) =>
-    firestore("post", ":runQuery", {
+  const query = (fieldPath, value) => {
+    const result = firestore("post", ":runQuery", {
       structuredQuery: {
         from: [{ collectionId: "expenses" }],
         where: { fieldFilter: { field: { fieldPath }, op: "EQUAL", value: { stringValue: value } } },
       },
-    }).json || []
+    })
+    // Stop on errors instead of silently importing without a category.
+    if (result.code !== 200) throw new Error(`Firestore ${result.code}: ${JSON.stringify(result.json)}`)
+    return result.json || []
+  }
 
   const docs = query("merchantKey", parsed.merchantKey)
     .concat(query("name", parsed.name))
@@ -178,6 +189,30 @@ function importBankEmails() {
   })
 
   props.setProperty("seen", JSON.stringify(seen.slice(-300)))
+}
+
+/* ---------- MANUAL TESTS (run from the editor; no card purchase needed) ---------- */
+
+// Shows how the 5 most recent BAC emails are read. Saves nothing.
+function testReadLatestEmails() {
+  latestBankMessages(5).forEach((message) =>
+    Logger.log(`${message.getDate()} -> ${JSON.stringify(parseBankEmail(message.getPlainBody()))}`)
+  )
+}
+
+// Imports the most recent BAC email as a real "To review" transaction so you can see it in the app.
+// Delete it in the app afterwards; the 5-minute import skips it because it is older than setup().
+function testImportLatestEmail() {
+  const message = latestBankMessages(1)[0]
+  if (!message) throw new Error("No BAC emails found in Gmail.")
+  const parsed = parseBankEmail(message.getPlainBody())
+  if (!parsed) throw new Error(`Could not read this email:\n${message.getPlainBody().slice(0, 1000)}`)
+  saveExpense(message.getId(), parsed)
+  Logger.log(`Imported: ${JSON.stringify(parsed)}`)
+}
+
+function latestBankMessages(count) {
+  return GmailApp.search(`from:${SENDER}`, 0, count).map((thread) => thread.getMessages().pop())
 }
 
 function setup() {

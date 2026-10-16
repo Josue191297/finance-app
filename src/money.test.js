@@ -1,6 +1,53 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { addMonth, toDateInput, totalsByCategory, expenseTotal, sumByType, savingsAmount } from "./money.js"
+import {
+  addMonth,
+  toDateInput,
+  totalsByCategory,
+  expenseTotal,
+  sumByType,
+  savingsAmount,
+  dayLabel,
+  groupConsecutive,
+  categoryUseCount,
+} from "./money.js"
+
+test("dayLabel names today and yesterday, including across a month boundary", () => {
+  const now = new Date(2026, 10, 1, 9, 0) // Nov 1
+  assert.equal(dayLabel("2026-11-01", now), "Today")
+  assert.equal(dayLabel("2026-10-31", now), "Yesterday")
+  assert.equal(dayLabel("2026-10-12", now), "Mon, Oct 12")
+  assert.equal(dayLabel("2025-10-12", now), "Sun, Oct 12, 2025")
+  assert.equal(dayLabel("", now), "No date")
+})
+
+test("groupConsecutive keeps order and groups runs", () => {
+  const groups = groupConsecutive(["a1", "a2", "b1", "a3"], (s) => s[0])
+  assert.deepEqual(groups, [
+    { key: "a", items: ["a1", "a2"] },
+    { key: "b", items: ["b1"] },
+    { key: "a", items: ["a3"] },
+  ])
+})
+
+test("categoryUseCount counts transactions of the same type using a category", () => {
+  const expenses = [
+    { type: "expense", transactionMode: "simple", category: "Food", amount: 1 },
+    {
+      type: "expense",
+      transactionMode: "detailed",
+      items: [
+        { category: "Food", amount: 1 },
+        { category: "Food", amount: 2 },
+      ],
+    },
+    { type: "income", transactionMode: "simple", category: "Food", amount: 5 },
+    { type: "expense", transactionMode: "simple", category: "Rent", amount: 9 },
+  ]
+  assert.equal(categoryUseCount(expenses, "Food", "expense"), 2)
+  assert.equal(categoryUseCount(expenses, "Food", "income"), 1)
+  assert.equal(categoryUseCount(expenses, "Gym", "expense"), 0)
+})
 
 test("savingsAmount counts only the Savings lines of a receipt", () => {
   const receipt = {

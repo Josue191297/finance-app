@@ -1,5 +1,5 @@
 import { useState } from "react"
-import { db } from "../firebase"
+import { db, saveInBackground } from "../firebase"
 import { addDoc, collection } from "firebase/firestore"
 import { householdId } from "../household"
 
@@ -33,18 +33,7 @@ function FutureExpenseForm({
     setCategory("")
   }
 
-  const resetForm = () => {
-    setType("expense")
-    setName("")
-    setAmount("")
-    setCategory("")
-    setDueDate("")
-    setRecurring(false)
-    setRecurringMode("forever")
-    setMonthsRemaining("")
-  }
-
-  const handleSubmit = async (e) => {
+  const handleSubmit = (e) => {
     e.preventDefault()
 
     if (!name.trim() || !amount || !dueDate) return
@@ -72,27 +61,19 @@ function FutureExpenseForm({
           : null,
     }
 
-    try {
-      if (editingExpense && onSave) {
-        await onSave({
-          ...editingExpense,
+    if (editingExpense && onSave) {
+      onSave({ ...editingExpense, ...data })
+    } else {
+      saveInBackground(
+        addDoc(collection(db, "households", householdId, "futureExpenses"), {
           ...data,
-        })
-      } else {
-        await addDoc(
-          collection(db, "households", householdId, "futureExpenses"),
-          {
-            ...data,
-            createdAt: Date.now(),
-          }
-        )
-      }
-
-      resetForm()
-      if (onClose) onClose()
-    } catch (error) {
-      console.error("Error saving future expense:", error)
+          createdAt: Date.now(),
+        }),
+        "upcoming payment"
+      )
     }
+
+    if (onClose) onClose()
   }
 
   return (

@@ -12,12 +12,8 @@ import {
   amountInCategory,
   totalsByCategory,
   sumByType,
+  formatMoney,
 } from "../money";
-
-const formatMoney = (value) =>
-  `${value < 0 ? "-" : ""}₡${Math.abs(Number(value)).toLocaleString("en-US", {
-    maximumFractionDigits: 2,
-  })}`;
 
 const week = (now, offset) => {
   const first = new Date(now.getFullYear(), now.getMonth(), now.getDate() - now.getDay() + 7 * offset);

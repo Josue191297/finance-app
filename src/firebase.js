@@ -19,6 +19,13 @@ export const db = initializeFirestore(app, {
   localCache: persistentLocalCache()
 })
 
+// Firestore applies a write to the local cache at once and syncs it later, but its promise only
+// settles when the server answers, which never happens offline. So the UI must not await writes;
+// it starts them with this and moves on. A later server rejection (e.g. rules) is only logged.
+export const saveInBackground = (write, what) => {
+  write.catch((error) => console.error(`Could not save ${what}:`, error))
+}
+
 // Keep in sync with the email list in firestore.rules.
 export const PEOPLE = {
   "josuesalazar1912@gmail.com": "Josue",

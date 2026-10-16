@@ -14,6 +14,41 @@ export const toDateInput = (date) => {
 
 export const today = () => toDateInput(new Date())
 
+export const formatMoney = (value) => {
+  const number = Number(value || 0)
+  return `${number < 0 ? "-" : ""}₡${Math.abs(number).toLocaleString("en-US", {
+    maximumFractionDigits: 2,
+  })}`
+}
+
+// "Today", "Yesterday", or "Mon, Oct 12" (with the year when it is not this year).
+export const dayLabel = (dateStr, now = new Date()) => {
+  const date = parseLocalDate(dateStr)
+  if (!date) return "No date"
+  const todayStr = toDateInput(now)
+  const yesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1)
+  if (dateStr === todayStr) return "Today"
+  if (dateStr === toDateInput(yesterday)) return "Yesterday"
+  return date.toLocaleDateString("en-US", {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    ...(date.getFullYear() !== now.getFullYear() && { year: "numeric" }),
+  })
+}
+
+// Splits an already-sorted list into runs that share the same key: [{ key, items }].
+export const groupConsecutive = (list, keyOf) => {
+  const groups = []
+  for (const entry of list) {
+    const key = keyOf(entry)
+    const last = groups[groups.length - 1]
+    if (last && last.key === key) last.items.push(entry)
+    else groups.push({ key, items: [entry] })
+  }
+  return groups
+}
+
 // Same day next month, capped at that month's last day (Jan 31 -> Feb 28).
 export const addMonth = (dateStr) => {
   const d = parseLocalDate(dateStr)
@@ -76,7 +111,17 @@ export const savingsAmount = (expense) =>
         .reduce((sum, item) => sum + Number(item.amount || 0), 0)
     : Number(expense.amount || 0)
 
-export const sumByType =(expenses, type) =>
+// How many transactions of this type use the category (on any receipt line).
+export const categoryUseCount = (expenses, name, type) =>
+  expenses.filter(
+    (expense) =>
+      (expense.type || "expense") === type &&
+      (isDetailed(expense)
+        ? expense.items.some((item) => item.category === name)
+        : expense.category === name)
+  ).length
+
+export const sumByType = (expenses, type) =>
   expenses
     .filter((expense) => expense.type === type)
     .reduce((sum, expense) => sum + expenseTotal(expense), 0)

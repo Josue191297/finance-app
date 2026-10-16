@@ -30,7 +30,6 @@ import { onAuthStateChanged } from "firebase/auth"
 import {
   collection,
   onSnapshot,
-  addDoc,
 } from "firebase/firestore"
 import { householdId } from "./household"
 
@@ -105,15 +104,6 @@ function App() {
   }, [allowed])
 
 
-  /* ---------------- ADD EXPENSE ---------------- */
-
-  const addExpense = async (expense) => {
-    await addDoc(collection(db, "households", householdId, "expenses"), {
-      ...expense,
-      createdAt: Date.now()
-    })
-  }
-
   /* ---------------- GUARDS ---------------- */
 
   if (loading) {
@@ -156,6 +146,7 @@ function App() {
           element={
             <Settings
               categories={categories}
+              expenses={expenses}
               theme={theme}
               setTheme={setTheme}
             />
@@ -226,11 +217,6 @@ function App() {
             </button>
 
             <AddExpense
-              onAdd={async (expense) => {
-                await addExpense(expense)
-                setShowExpenseModal(false)
-                setFabOpen(false)
-              }}
               onClose={() => {
                 setShowExpenseModal(false)
                 setFabOpen(false)

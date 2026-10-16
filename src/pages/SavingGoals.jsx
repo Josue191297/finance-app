@@ -7,655 +7,471 @@ import {
   onSnapshot,
   updateDoc,
 } from "firebase/firestore"
-import { db } from "../firebase"
+import { db, saveInBackground } from "../firebase"
 import { householdId } from "../household"
-import { savingsAmount } from "../money"
-import { FiEdit2, FiX } from "react-icons/fi"
+import { savingsAmount, formatMoney, parseLocalDate } from "../money"
+import { FiEdit2, FiX, FiPlus, FiCheckCircle } from "react-icons/fi"
+import ConfirmModal from "../components/ConfirmModal"
+
+const goalsCollection = () => collection(db, "households", householdId, "savingGoals")
 
 function SavingsGoals({ expenses }) {
   const [goals, setGoals] = useState([])
-
-  const [editingGoal, setEditingGoal] = useState(null)
-  const [showGoalModal, setShowGoalModal] = useState(false)
+  const [formGoal, setFormGoal] = useState(null) // {} for a new goal, the goal when editing
   const [goalToDelete, setGoalToDelete] = useState(null)
 
-  const [name, setName] = useState("")
-  const [targetAmount, setTargetAmount] = useState("")
-  const [dueDate, setDueDate] = useState("")
-
-  /* REAL-TIME FIRESTORE LISTENERS */
   useEffect(() => {
-    const unsubscribeGoals = onSnapshot(
-      collection(db, "households", householdId, "savingGoals"),
+    const unsubscribe = onSnapshot(
+      goalsCollection(),
       (snapshot) => {
-        setGoals(
-          snapshot.docs.map((item) => ({
-            id: item.id,
-            ...item.data(),
-          }))
-        )
+        setGoals(snapshot.docs.map((item) => ({ id: item.id, ...item.data() })))
       },
-      (error) => {
-        console.error("Savings goals snapshot error:", error)
-      }
+      (error) => console.error("Savings goals snapshot error:", error)
     )
-
-    return () => unsubscribeGoals()
+    return () => unsubscribe()
   }, [])
 
-  /* RESET FORM */
-  const resetForm = () => {
-    setName("")
-    setTargetAmount("")
-    setDueDate("")
+  const goalsWithProgress = useMemo(
+    () =>
+      goals.map((goal) => {
+        const savedAmount = expenses
+          .filter((expense) => expense.type === "expense" && expense.savingGoalId === goal.id)
+          .reduce((sum, expense) => sum + savingsAmount(expense), 0)
+        const target = Number(goal.targetAmount || 0)
+
+        return {
+          ...goal,
+          savedAmount,
+          target,
+          percent: target > 0 ? Math.min((savedAmount / target) * 100, 100) : 0,
+          remaining: target > 0 ? Math.max(target - savedAmount, 0) : null,
+        }
+      }),
+    [goals, expenses]
+  )
+
+  const totalSaved = goalsWithProgress.reduce((sum, goal) => sum + goal.savedAmount, 0)
+
+  const confirmDelete = () => {
+    saveInBackground(deleteDoc(doc(goalsCollection(), goalToDelete.id)), "goal deletion")
+    setGoalToDelete(null)
   }
-
-  /* OPEN CREATE */
-  const openCreateGoal = () => {
-    resetForm()
-    setEditingGoal(null)
-    setShowGoalModal(true)
-  }
-
-  /* OPEN EDIT */
-  const openEditGoal = (goal) => {
-    setEditingGoal(goal)
-    setName(goal.name || "")
-    setTargetAmount(
-      goal.targetAmount !== null &&
-        goal.targetAmount !== undefined
-        ? goal.targetAmount
-        : ""
-    )
-    setDueDate(goal.dueDate || "")
-    setShowGoalModal(true)
-  }
-
-  /* CLOSE EDIT/CREATE */
-  const closeGoalModal = () => {
-    setShowGoalModal(false)
-    setEditingGoal(null)
-    resetForm()
-  }
-
-  /* SAVE / UPDATE */
-  const handleSubmit = async (e) => {
-    e.preventDefault()
-
-    if (!name.trim()) return
-
-    const goalData = {
-      name: name.trim(),
-      targetAmount:
-        targetAmount !== ""
-          ? Number(targetAmount)
-          : null,
-      dueDate: dueDate || null,
-    }
-
-    try {
-      if (editingGoal) {
-        await updateDoc(
-          doc(
-            db,
-            "households",
-            householdId,
-            "savingGoals",
-            editingGoal.id
-          ),
-          goalData
-        )
-      } else {
-        await addDoc(
-          collection(
-            db,
-            "households",
-            householdId,
-            "savingGoals"
-          ),
-          {
-            ...goalData,
-            createdAt: Date.now(),
-          }
-        )
-      }
-
-      closeGoalModal()
-    } catch (error) {
-      console.error(
-        "Error saving savings goal:",
-        error
-      )
-    }
-  }
-
-  /* DELETE */
-  const confirmDelete = async () => {
-    if (!goalToDelete) return
-
-    try {
-      await deleteDoc(
-        doc(
-          db,
-          "households",
-          householdId,
-          "savingGoals",
-          goalToDelete.id
-        )
-      )
-
-      setGoalToDelete(null)
-    } catch (error) {
-      console.error(
-        "Error deleting savings goal:",
-        error
-      )
-    }
-  }
-
-  /* CALCULATE PROGRESS */
-  const goalsWithProgress = useMemo(() => {
-    return goals.map((goal) => {
-      const savedAmount = expenses
-        .filter(
-          (expense) =>
-            expense.type === "expense" &&
-            expense.savingGoalId === goal.id
-        )
-        .reduce(
-          (sum, expense) => sum + savingsAmount(expense),
-          0
-        )
-
-      const target = Number(
-        goal.targetAmount || 0
-      )
-
-      return {
-        ...goal,
-        savedAmount,
-        percent:
-          target > 0
-            ? Math.min(
-                (savedAmount / target) * 100,
-                100
-              )
-            : 0,
-        remaining:
-          target > 0
-            ? Math.max(
-                target - savedAmount,
-                0
-              )
-            : null,
-      }
-    })
-  }, [goals, expenses])
 
   return (
     <div style={containerStyle}>
       <div style={headerStyle}>
-        <h2 style={titleStyle}>
-          Savings Goals
-        </h2>
-
-        <button
-          type="button"
-          style={addTextButtonStyle}
-          onClick={openCreateGoal}
-        >
-          + New Goal
+        <h2 style={titleStyle}>Goals</h2>
+        <button style={newGoalButtonStyle} onClick={() => setFormGoal({})}>
+          <FiPlus aria-hidden="true" /> New goal
         </button>
       </div>
 
+      {goalsWithProgress.length > 0 && (
+        <div style={totalCardStyle}>
+          <div style={totalLabelStyle}>Saved across all goals</div>
+          <div style={totalAmountStyle}>{formatMoney(totalSaved)}</div>
+        </div>
+      )}
+
+      <p style={hintStyle}>
+        To add money to a goal, record an expense with an item in the “Savings” category and pick
+        the goal.
+      </p>
+
       {goalsWithProgress.length === 0 ? (
-        <p
-          style={{
-            color: "var(--text-secondary)",
-          }}
-        >
-          No savings goals yet.
-        </p>
+        <div style={emptyStyle}>
+          <p style={{ margin: 0, fontWeight: 600 }}>No savings goals yet</p>
+          <p style={{ margin: "4px 0 0" }}>Create one for a trip, an emergency fund, or anything else.</p>
+        </div>
       ) : (
-        <div style={listStyle}>
-          {goalsWithProgress.map((goal) => (
-            <div
-              key={goal.id}
-              style={cardStyle}
-            >
-              {/* TOP ROW */}
-              <div style={rowStyle}>
+        goalsWithProgress.map((goal) => {
+          const reached = goal.target > 0 && goal.remaining === 0
+          const due = parseLocalDate(goal.dueDate)
+
+          return (
+            <div key={goal.id} style={cardStyle}>
+              <div style={cardTopStyle}>
                 <div style={{ minWidth: 0 }}>
-                  <strong style={nameStyle}>
-                    {goal.name}
-                  </strong>
-
-                  {goal.dueDate && (
+                  <div style={goalNameStyle}>{goal.name}</div>
+                  {due && (
                     <div style={metaStyle}>
-                      Due{" "}
-                      {new Date(
-                        `${goal.dueDate}T00:00:00`
-                      ).toLocaleDateString()}
+                      Due {due.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
                     </div>
                   )}
                 </div>
 
-                {/* SAME ACTION STYLE AS TRANSACTIONS */}
-                <div style={iconRowStyle}>
-                  <FiEdit2
-                    size={15}
-                    style={iconStyle}
-                    onClick={() =>
-                      openEditGoal(goal)
-                    }
-                  />
-
-                  <FiX
-                    size={15}
-                    style={deleteIconStyle}
-                    onClick={() =>
-                      setGoalToDelete(goal)
-                    }
-                  />
+                <div style={{ display: "flex", gap: 2 }}>
+                  <button
+                    style={actionStyle}
+                    onClick={() => setFormGoal(goal)}
+                    title="Edit"
+                    aria-label={`Edit ${goal.name}`}
+                  >
+                    <FiEdit2 size={15} />
+                  </button>
+                  <button
+                    style={{ ...actionStyle, color: "var(--expense)" }}
+                    onClick={() => setGoalToDelete(goal)}
+                    title="Delete"
+                    aria-label={`Delete ${goal.name}`}
+                  >
+                    <FiX size={17} />
+                  </button>
                 </div>
               </div>
 
-              {/* AMOUNTS */}
-              <div style={amountRowStyle}>
-                <span>
-                  Saved: ₡
-                  {goal.savedAmount.toLocaleString(
-                    undefined,
-                    {
-                      minimumFractionDigits: 2,
-                      maximumFractionDigits: 2,
-                    }
-                  )}
-                </span>
-
-                {goal.targetAmount !==
-                  null &&
-                  goal.targetAmount !==
-                    undefined && (
-                    <span>
-                      Goal: ₡
-                      {Number(
-                        goal.targetAmount
-                      ).toLocaleString(
-                        undefined,
-                        {
-                          minimumFractionDigits: 2,
-                          maximumFractionDigits: 2,
-                        }
-                      )}
-                    </span>
-                  )}
+              <div style={amountLineStyle}>
+                <span style={savedAmountStyle}>{formatMoney(goal.savedAmount)}</span>
+                {goal.target > 0 && <span style={metaStyle}>of {formatMoney(goal.target)}</span>}
               </div>
 
-              {/* PROGRESS */}
-              {goal.targetAmount !==
-                null &&
-                goal.targetAmount !==
-                  undefined && (
-                  <>
+              {goal.target > 0 && (
+                <>
+                  <div
+                    style={trackStyle}
+                    role="progressbar"
+                    aria-label={`${goal.name} progress`}
+                    aria-valuenow={Math.round(goal.percent)}
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                  >
                     <div
-                      style={
-                        progressTrackStyle
-                      }
-                    >
-                      <div
-                        style={{
-                          ...progressFillStyle,
-                          width: `${goal.percent}%`,
-                        }}
-                      />
-                    </div>
-
-                    <div style={metaStyle}>
-                      Remaining: ₡
-                      {goal.remaining.toLocaleString(
-                        undefined,
-                        {
-                          minimumFractionDigits: 2,
-                          maximumFractionDigits: 2,
-                        }
-                      )}
-                    </div>
-                  </>
-                )}
+                      style={{
+                        ...fillStyle,
+                        width: `${Math.max(goal.percent, 2)}%`,
+                        background: reached ? "var(--income)" : "var(--primary)",
+                      }}
+                    />
+                  </div>
+                  <div style={progressTextStyle}>
+                    {reached ? (
+                      <span style={{ color: "var(--income)", display: "inline-flex", alignItems: "center", gap: 4 }}>
+                        <FiCheckCircle aria-hidden="true" /> Goal reached
+                      </span>
+                    ) : (
+                      <>
+                        <span>{Math.round(goal.percent)}%</span>
+                        <span>{formatMoney(goal.remaining)} to go</span>
+                      </>
+                    )}
+                  </div>
+                </>
+              )}
             </div>
-          ))}
-        </div>
+          )
+        })
       )}
 
-      {/* EDIT / CREATE MODAL - SAME STYLE AS TRANSACTION EDIT */}
-      {showGoalModal && (
-        <div
-          style={overlayStyle}
-          onClick={closeGoalModal}
-        >
-          <div
-            style={editModalStyle}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <button
-              type="button"
-              style={closeButtonStyle}
-              onClick={closeGoalModal}
-            >
-              ✕
-            </button>
+      {formGoal && <GoalForm goal={formGoal} onClose={() => setFormGoal(null)} />}
 
-            <form
-              onSubmit={handleSubmit}
-              style={formStyle}
-            >
-              <h2 style={modalTitleStyle}>
-                {editingGoal
-                  ? "Edit Savings Goal"
-                  : "Add Savings Goal"}
-              </h2>
-
-              <input
-                type="text"
-                placeholder="Goal name"
-                value={name}
-                onChange={(e) =>
-                  setName(e.target.value)
-                }
-                style={inputStyle}
-              />
-
-              <input
-                type="number"
-                min="0"
-                placeholder="Target amount (optional)"
-                value={targetAmount}
-                onChange={(e) =>
-                  setTargetAmount(e.target.value)
-                }
-                style={inputStyle}
-              />
-
-              <input
-                type="date"
-                value={dueDate}
-                onChange={(e) =>
-                  setDueDate(e.target.value)
-                }
-                style={inputStyle}
-              />
-
-              <div style={buttonRowStyle}>
-                <button
-                  type="button"
-                  onClick={closeGoalModal}
-                  style={cancelButtonStyle}
-                >
-                  Cancel
-                </button>
-
-                <button
-                  type="submit"
-                  style={buttonStyle}
-                >
-                  {editingGoal
-                    ? "Update"
-                    : "Add"}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* DELETE MODAL - SAME STYLE AS TRANSACTION DELETE */}
       {goalToDelete && (
-        <div style={overlayStyle}>
-          <div style={modalStyle}>
-            <p>
-              Are you sure you want to delete
-              this savings goal?
-            </p>
-
-            <div
-              style={{
-                marginTop: 20,
-                textAlign: "right",
-              }}
-            >
-              <button
-                type="button"
-                onClick={() =>
-                  setGoalToDelete(null)
-                }
-              >
-                Cancel
-              </button>
-
-              <button
-                type="button"
-                onClick={confirmDelete}
-                style={deleteButtonStyle}
-              >
-                Delete
-              </button>
-            </div>
-          </div>
-        </div>
+        <ConfirmModal
+          title="Delete goal?"
+          message={`"${goalToDelete.name}" will be removed. Transactions linked to it are kept.`}
+          onConfirm={confirmDelete}
+          onCancel={() => setGoalToDelete(null)}
+        />
       )}
     </div>
   )
 }
 
-/*
-  Small modal component.
-
-  It stays hidden when no goal is being edited and when the
-  create form has not been opened. To support the create button
-  cleanly, the parent uses the initial blank form state.
-*/
 export default SavingsGoals
 
-/* ---------------- STYLES ---------------- */
+// Create or edit form; mounted fresh each time, so state starts from the goal.
+function GoalForm({ goal, onClose }) {
+  const editing = Boolean(goal.id)
+  const [name, setName] = useState(goal.name || "")
+  const [targetAmount, setTargetAmount] = useState(goal.targetAmount ?? "")
+  const [dueDate, setDueDate] = useState(goal.dueDate || "")
+  const [error, setError] = useState("")
+
+  const handleSubmit = (e) => {
+    e.preventDefault()
+    if (!name.trim()) {
+      setError("Give the goal a name.")
+      return
+    }
+
+    const goalData = {
+      name: name.trim(),
+      targetAmount: targetAmount !== "" ? Number(targetAmount) : null,
+      dueDate: dueDate || null,
+    }
+
+    saveInBackground(
+      editing
+        ? updateDoc(doc(goalsCollection(), goal.id), goalData)
+        : addDoc(goalsCollection(), { ...goalData, createdAt: Date.now() }),
+      "goal"
+    )
+    onClose()
+  }
+
+  return (
+    <div style={overlayStyle} onClick={onClose}>
+      <form
+        style={formStyle}
+        onSubmit={handleSubmit}
+        onClick={(e) => e.stopPropagation()}
+        noValidate
+      >
+        <h2 style={{ margin: 0, fontSize: 22 }}>{editing ? "Edit goal" : "New goal"}</h2>
+
+        <label style={fieldStyle}>
+          <span style={labelStyle}>Name</span>
+          <input
+            type="text"
+            placeholder="e.g. Trip to Japan"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            autoFocus
+          />
+        </label>
+
+        <div style={fieldGridStyle}>
+          <label style={fieldStyle}>
+            <span style={labelStyle}>Target (optional)</span>
+            <input
+              type="number"
+              inputMode="decimal"
+              min="0"
+              placeholder="₡0"
+              value={targetAmount}
+              onChange={(e) => setTargetAmount(e.target.value)}
+            />
+          </label>
+
+          <label style={fieldStyle}>
+            <span style={labelStyle}>Due date (optional)</span>
+            <input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
+          </label>
+        </div>
+
+        {error && (
+          <p style={errorStyle} role="alert">
+            {error}
+          </p>
+        )}
+
+        <div style={formButtonsStyle}>
+          <button type="button" onClick={onClose} style={{ background: "transparent" }}>
+            Cancel
+          </button>
+          <button type="submit" style={saveButtonStyle}>
+            {editing ? "Save" : "Create"}
+          </button>
+        </div>
+      </form>
+    </div>
+  )
+}
+
+/* ---------- STYLES ---------- */
 
 const containerStyle = {
-  padding: 20,
-  maxWidth: 700,
+  padding: "clamp(12px, 4vw, 24px)",
+  maxWidth: 760,
   margin: "0 auto",
+  color: "var(--text)",
 }
 
 const headerStyle = {
   display: "flex",
-  alignItems: "center",
   justifyContent: "space-between",
-  marginBottom: 20,
+  alignItems: "center",
+  gap: 12,
+  marginBottom: 16,
 }
 
 const titleStyle = {
-  color: "var(--text)",
   margin: 0,
+  fontSize: 24,
 }
 
-const modalTitleStyle = {
-  margin: 0,
-}
-
-const addTextButtonStyle = {
+const newGoalButtonStyle = {
+  display: "inline-flex",
+  alignItems: "center",
+  gap: 6,
+  padding: "8px 14px",
   border: "none",
-  background: "transparent",
-  color: "var(--primary)",
-  cursor: "pointer",
-  fontSize: 15,
+  borderRadius: 999,
+  background: "var(--primary)",
+  color: "white",
   fontWeight: 600,
-  padding: "6px 0",
 }
 
-const listStyle = {
-  display: "flex",
-  flexDirection: "column",
-  gap: 14,
+const totalCardStyle = {
+  padding: "18px 20px",
+  borderRadius: 18,
+  background: "var(--hero-bg)",
+  color: "white",
+  boxShadow: "var(--shadow)",
+}
+
+const totalLabelStyle = {
+  fontSize: 13,
+  opacity: 0.85,
+}
+
+const totalAmountStyle = {
+  marginTop: 2,
+  fontSize: 28,
+  fontWeight: 700,
+  letterSpacing: "-0.02em",
+}
+
+const hintStyle = {
+  margin: "12px 4px 16px",
+  fontSize: 13,
+  color: "var(--text-secondary)",
+}
+
+const emptyStyle = {
+  padding: "28px 16px",
+  textAlign: "center",
+  color: "var(--text-secondary)",
+  background: "var(--card)",
+  border: "1px dashed var(--border)",
+  borderRadius: 16,
 }
 
 const cardStyle = {
+  padding: "16px 18px",
+  marginBottom: 12,
+  borderRadius: 16,
   background: "var(--card)",
   border: "1px solid var(--border)",
-  borderRadius: 14,
-  padding: 18,
-  color: "var(--text)",
+  boxShadow: "var(--shadow)",
 }
 
-const rowStyle = {
+const cardTopStyle = {
   display: "flex",
   justifyContent: "space-between",
   alignItems: "flex-start",
   gap: 12,
 }
 
-const nameStyle = {
+const goalNameStyle = {
   fontSize: 16,
   fontWeight: 600,
-}
-
-const iconRowStyle = {
-  display: "flex",
-  gap: 12,
-}
-
-const iconStyle = {
-  cursor: "pointer",
-  opacity: 0.7,
-  transition: "0.2s",
-}
-
-const deleteIconStyle = {
-  cursor: "pointer",
-  opacity: 0.7,
-  transition: "0.2s",
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+  whiteSpace: "nowrap",
 }
 
 const metaStyle = {
-  color: "var(--text-secondary)",
   fontSize: 13,
-  marginTop: 4,
+  color: "var(--text-secondary)",
 }
 
-const amountRowStyle = {
+const actionStyle = {
+  width: 32,
+  height: 32,
+  padding: 0,
+  display: "grid",
+  placeItems: "center",
+  border: "none",
+  borderRadius: 9,
+  background: "transparent",
+  color: "var(--text-secondary)",
+}
+
+const amountLineStyle = {
+  display: "flex",
+  alignItems: "baseline",
+  gap: 6,
+  marginTop: 10,
+}
+
+const savedAmountStyle = {
+  fontSize: 22,
+  fontWeight: 700,
+}
+
+const trackStyle = {
+  height: 10,
+  marginTop: 10,
+  borderRadius: 5,
+  background: "var(--track)",
+  overflow: "hidden",
+}
+
+const fillStyle = {
+  height: "100%",
+  borderRadius: 5,
+  transition: "width 0.3s ease",
+}
+
+const progressTextStyle = {
   display: "flex",
   justifyContent: "space-between",
-  gap: 12,
-  marginTop: 14,
-  fontSize: 14,
-}
-
-const progressTrackStyle = {
-  height: 8,
-  background: "var(--border)",
-  borderRadius: 999,
-  overflow: "hidden",
-  marginTop: 12,
-}
-
-const progressFillStyle = {
-  height: "100%",
-  background: "var(--income)",
+  marginTop: 6,
+  fontSize: 13,
+  color: "var(--text-secondary)",
 }
 
 const overlayStyle = {
   position: "fixed",
-  top: 0,
-  left: 0,
-  width: "100vw",
-  height: "100vh",
+  inset: 0,
   background: "rgba(0,0,0,0.45)",
   display: "flex",
   alignItems: "center",
   justifyContent: "center",
+  padding: 16,
   zIndex: 1000,
-  padding: 20,
-}
-
-const modalStyle = {
-  background: "var(--card)",
-  color: "var(--text)",
-  padding: 30,
-  borderRadius: 12,
-  width: 300,
-  boxShadow: "0 8px 20px rgba(0,0,0,0.2)",
-}
-
-const deleteButtonStyle = {
-  marginLeft: 10,
-  background: "var(--expense)",
-  color: "white",
-  border: "none",
-  padding: "6px 12px",
-  borderRadius: 6,
-  cursor: "pointer",
 }
 
 const formStyle = {
-  color: "var(--text)",
+  width: "min(460px, 100%)",
   padding: 24,
-  display: "flex",
-  flexDirection: "column",
-  gap: 18,
-}
-
-const inputStyle = {
-  padding: "12px 14px",
-  borderRadius: 10,
-  border: "1px solid var(--border)",
+  borderRadius: 18,
   background: "var(--card)",
   color: "var(--text)",
+  boxShadow: "0 12px 30px rgba(0,0,0,0.3)",
+  display: "flex",
+  flexDirection: "column",
+  gap: 16,
+}
+
+const fieldGridStyle = {
+  display: "grid",
+  gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))",
+  gap: 12,
+}
+
+const fieldStyle = {
+  display: "flex",
+  flexDirection: "column",
+  gap: 6,
+  minWidth: 0,
+}
+
+const labelStyle = {
+  fontSize: 13,
+  fontWeight: 600,
+  color: "var(--text-secondary)",
+}
+
+const errorStyle = {
+  margin: 0,
+  padding: "10px 12px",
+  borderRadius: 10,
+  background: "var(--expense-soft)",
+  color: "var(--expense)",
   fontSize: 14,
 }
 
-const buttonRowStyle = {
+const formButtonsStyle = {
   display: "flex",
   justifyContent: "flex-end",
-  gap: 10,
+  gap: 8,
 }
 
-const buttonStyle = {
-  padding: "12px 20px",
-  borderRadius: 10,
+const saveButtonStyle = {
   border: "none",
   background: "var(--primary)",
   color: "white",
-  cursor: "pointer",
   fontWeight: 600,
-}
-
-const cancelButtonStyle = {
-  padding: "12px 20px",
-  borderRadius: 10,
-  border: "1px solid var(--border)",
-  background: "transparent",
-  color: "var(--text)",
-  cursor: "pointer",
-}
-
-const editModalStyle = {
-  background: "var(--card)",
-  width: "100%",
-  maxWidth: 550,
-  borderRadius: 16,
-  boxShadow: "0 12px 30px rgba(0,0,0,0.3)",
-  position: "relative",
-}
-
-const closeButtonStyle = {
-  position: "absolute",
-  top: 12,
-  right: 12,
-  width: 32,
-  height: 32,
-  border: "none",
-  borderRadius: "50%",
-  background: "var(--border)",
-  color: "var(--text)",
-  cursor: "pointer",
-  fontSize: 16,
-  zIndex: 10,
+  padding: "0.6em 1.6em",
 }

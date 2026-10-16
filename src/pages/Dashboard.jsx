@@ -1,76 +1,49 @@
 import { useState } from "react"
+import { useNavigate } from "react-router-dom"
 import AddExpense from "./AddExpense"
 import { doc, deleteDoc, updateDoc } from "firebase/firestore"
-import { db } from "../firebase"
+import { db, saveInBackground } from "../firebase"
 import { householdId } from "../household"
-import { FiCheck, FiEdit2, FiX } from "react-icons/fi"
-import { parseLocalDate, expenseTotal as getExpenseTotal, transactionLabel } from "../money"
-import ReviewTag from "../components/ReviewTag"
+import { FiCheck, FiEdit2, FiX, FiChevronRight } from "react-icons/fi"
+import { parseLocalDate, dayLabel, groupConsecutive } from "../money"
+import TransactionRow from "../components/TransactionRow"
+import ConfirmModal from "../components/ConfirmModal"
 
 const RECENT_DAYS = 30
 
 function Dashboard({ categories, expenses }) {
+  const navigate = useNavigate()
   const [editingExpense, setEditingExpense] = useState(null)
   const [expenseToDelete, setExpenseToDelete] = useState(null)
 
-  const formatDate = (dateStr) => {
-    const date = parseLocalDate(dateStr)
-    return date ? date.toLocaleDateString() : "No date"
-  }
+  const expenseRef = (expense) =>
+    doc(db, "households", householdId, "expenses", expense.id)
 
-  const isRecentTransaction = (expense) => {
-    if (!expense.date) return true
-
-    const expenseDate = parseLocalDate(expense.date)
-    const cutoff = new Date()
-    cutoff.setDate(cutoff.getDate() - RECENT_DAYS)
-
-    return expenseDate >= cutoff
-  }
-
-  const confirmDelete = async () => {
-    try {
-      await deleteDoc(
-        doc(
-          db,
-          "households",
-          householdId,
-          "expenses",
-          expenseToDelete.id
-        )
-      )
-
-      setExpenseToDelete(null)
-    } catch (error) {
-      console.error("Delete error:", error)
-    }
+  const confirmDelete = () => {
+    saveInBackground(deleteDoc(expenseRef(expenseToDelete)), "deletion")
+    setExpenseToDelete(null)
   }
 
   // Confirms an imported transaction as-is (category and amount already right).
-  const confirmReview = async (expense) => {
-    try {
-      await updateDoc(doc(db, "households", householdId, "expenses", expense.id), {
-        needsReview: false,
-      })
-    } catch (error) {
-      console.error("Review error:", error)
-    }
+  const confirmReview = (expense) => {
+    saveInBackground(updateDoc(expenseRef(expense), { needsReview: false }), "review")
   }
 
   const reviewCount = expenses.filter((expense) => expense.needsReview).length
 
-  const sortedExpenses = [...expenses].sort((a, b) => {
-    const dateA = parseLocalDate(a.date) || new Date(0)
-    const dateB = parseLocalDate(b.date) || new Date(0)
-    return dateB - dateA
-  })
+  const cutoff = new Date()
+  cutoff.setDate(cutoff.getDate() - RECENT_DAYS)
 
-  const recentExpenses = sortedExpenses.filter(isRecentTransaction)
-  const hiddenCount = sortedExpenses.length - recentExpenses.length
+  const recentExpenses = expenses
+    .filter((expense) => !expense.date || parseLocalDate(expense.date) >= cutoff)
+    .sort((a, b) => (b.date || "").localeCompare(a.date || "") || (b.createdAt || 0) - (a.createdAt || 0))
+
+  const days = groupConsecutive(recentExpenses, (expense) => expense.date || "")
+  const hasOlder = recentExpenses.length < expenses.length
 
   return (
     <div style={containerStyle}>
-      <h2 style={titleStyle}>Dashboard</h2>
+      <h2 style={titleStyle}>Home</h2>
 
       {reviewCount > 0 && (
         <p style={reviewBannerStyle}>
@@ -79,117 +52,75 @@ function Dashboard({ categories, expenses }) {
         </p>
       )}
 
-      {hiddenCount > 0 && (
-        <p style={hintStyle}>
-          Showing transactions from the last {RECENT_DAYS} days. Older
-          transactions are available in Settings → History.
-        </p>
+      {days.length === 0 ? (
+        <div style={emptyStyle}>
+          <p style={{ margin: 0, fontWeight: 600 }}>No transactions in the last {RECENT_DAYS} days</p>
+          <p style={{ margin: "4px 0 0" }}>Tap + to add one.</p>
+        </div>
+      ) : (
+        days.map((day) => (
+          <section key={day.key} style={{ marginBottom: 18 }}>
+            <h3 style={dayTitleStyle}>{dayLabel(day.key)}</h3>
+            <div style={groupCardStyle}>
+              {day.items.map((expense, index) => (
+                <div
+                  key={expense.id}
+                  style={index > 0 ? { borderTop: "1px solid var(--border)" } : undefined}
+                >
+                  <TransactionRow
+                    expense={expense}
+                    actions={
+                      <>
+                        {/* USD imports have no colones amount yet, so they must go through the form. */}
+                        {expense.needsReview && expense.currency !== "USD" && (
+                          <button
+                            style={{ ...actionStyle, color: "var(--income)" }}
+                            onClick={() => confirmReview(expense)}
+                            title="Looks right"
+                            aria-label={`Confirm ${expense.name}`}
+                          >
+                            <FiCheck size={17} />
+                          </button>
+                        )}
+                        <button
+                          style={actionStyle}
+                          onClick={() => setEditingExpense(expense)}
+                          title="Edit"
+                          aria-label={`Edit ${expense.name}`}
+                        >
+                          <FiEdit2 size={15} />
+                        </button>
+                        <button
+                          style={{ ...actionStyle, color: "var(--expense)" }}
+                          onClick={() => setExpenseToDelete(expense)}
+                          title="Delete"
+                          aria-label={`Delete ${expense.name}`}
+                        >
+                          <FiX size={17} />
+                        </button>
+                      </>
+                    }
+                  />
+                </div>
+              ))}
+            </div>
+          </section>
+        ))
       )}
 
-      {recentExpenses.length === 0 ? (
-        <p style={{ color: "var(--text-secondary)" }}>
-          No recent transactions.
-        </p>
-      ) : (
-        <div>
-          {recentExpenses.map((expense) => (
-            <div key={expense.id} style={cardStyle}>
-              <div style={rowStyle}>
-                <strong style={nameStyle}>
-                  {expense.name}
-                </strong>
-
-                <div style={iconRowStyle}>
-                  {/* USD imports have no colones amount yet, so they must go through the form. */}
-                  {expense.needsReview && expense.currency !== "USD" && (
-                    <button
-                      style={{ ...iconButtonStyle, color: "var(--income)" }}
-                      onClick={() => confirmReview(expense)}
-                      title="Looks right"
-                      aria-label={`Confirm ${expense.name}`}
-                    >
-                      <FiCheck size={17} />
-                    </button>
-                  )}
-
-                  <button
-                    style={iconButtonStyle}
-                    onClick={() => setEditingExpense(expense)}
-                    title="Edit"
-                    aria-label={`Edit ${expense.name}`}
-                  >
-                    <FiEdit2 size={15} />
-                  </button>
-
-                  <button
-                    style={{ ...iconButtonStyle, color: "var(--expense)" }}
-                    onClick={() => setExpenseToDelete(expense)}
-                    title="Delete"
-                    aria-label={`Delete ${expense.name}`}
-                  >
-                    <FiX size={17} />
-                  </button>
-                </div>
-              </div>
-
-              <div style={rowStyle}>
-                <div style={metaStyle}>
-                  <ReviewTag expense={expense} />
-                  {transactionLabel(expense)}
-
-                  {" | "}
-
-                  {formatDate(expense.date)}
-                </div>
-
-                <div
-                  style={{
-                    ...amountStyle,
-                    color:
-                      expense.type === "income"
-                        ? "var(--income)"
-                        : "var(--expense)",
-                  }}
-                >
-                  ₡
-                  {getExpenseTotal(expense).toLocaleString(undefined, {
-                    minimumFractionDigits: 2,
-                    maximumFractionDigits: 2,
-                  })}
-                </div>
-              </div>
-
-              {expense.transactionMode === "detailed" &&
-                expense.items?.length > 1 && (
-                  <div style={itemsContainerStyle}>
-                    {expense.items.map((item, index) => (
-                      <div key={index} style={itemRowStyle}>
-                        <span>{item.name}</span>
-                        <span>{item.category}</span>
-                        <span>
-                          ₡{Number(item.amount).toLocaleString()}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-            </div>
-          ))}
-        </div>
+      {hasOlder && (
+        <button style={historyLinkStyle} onClick={() => navigate("/history")}>
+          See older transactions in History <FiChevronRight aria-hidden="true" />
+        </button>
       )}
 
       {editingExpense && (
-        <div
-          style={overlayStyle}
-          onClick={() => setEditingExpense(null)}
-        >
-          <div
-            style={editModalStyle}
-            onClick={(e) => e.stopPropagation()}
-          >
+        <div style={overlayStyle} onClick={() => setEditingExpense(null)}>
+          <div style={editModalStyle} onClick={(e) => e.stopPropagation()}>
             <button
               style={closeButtonStyle}
               onClick={() => setEditingExpense(null)}
+              aria-label="Close"
             >
               ×
             </button>
@@ -204,21 +135,12 @@ function Dashboard({ categories, expenses }) {
       )}
 
       {expenseToDelete && (
-        <div style={overlayStyle}>
-          <div style={modalStyle}>
-            <p>Are you sure you want to delete this transaction?</p>
-
-            <div style={{ marginTop: 20, textAlign: "right" }}>
-              <button onClick={() => setExpenseToDelete(null)}>
-                Cancel
-              </button>
-
-              <button onClick={confirmDelete} style={deleteButtonStyle}>
-                Delete
-              </button>
-            </div>
-          </div>
-        </div>
+        <ConfirmModal
+          title="Delete transaction?"
+          message={`"${expenseToDelete.name}" will be removed from your history and totals.`}
+          onConfirm={confirmDelete}
+          onCancel={() => setExpenseToDelete(null)}
+        />
       )}
     </div>
   )
@@ -227,60 +149,15 @@ function Dashboard({ categories, expenses }) {
 export default Dashboard
 
 const containerStyle = {
-  padding: 20,
-  maxWidth: 700,
+  padding: "clamp(12px, 4vw, 24px)",
+  maxWidth: 760,
   margin: "0 auto",
+  color: "var(--text)",
 }
 
 const titleStyle = {
-  marginBottom: 10,
-  color: "var(--text)",
-}
-
-const hintStyle = {
-  marginBottom: 20,
-  color: "var(--text-secondary)",
-  fontSize: 13,
-}
-
-const cardStyle = {
-  background: "var(--card)",
-  padding: "18px 20px",
-  borderRadius: 14,
-  marginBottom: 16,
-  border: "1px solid var(--border)",
-  display: "flex",
-  flexDirection: "column",
-  gap: 10,
-}
-
-const rowStyle = {
-  display: "flex",
-  justifyContent: "space-between",
-  alignItems: "center",
-}
-
-const nameStyle = {
-  color: "var(--text)",
-  fontSize: 16,
-  fontWeight: 600,
-}
-
-const iconRowStyle = {
-  display: "flex",
-  gap: 4,
-}
-
-const iconButtonStyle = {
-  width: 36,
-  height: 36,
-  padding: 0,
-  display: "grid",
-  placeItems: "center",
-  border: "none",
-  borderRadius: 10,
-  background: "transparent",
-  color: "var(--text-secondary)",
+  margin: "0 0 16px",
+  fontSize: 24,
 }
 
 const reviewBannerStyle = {
@@ -288,49 +165,67 @@ const reviewBannerStyle = {
   padding: "10px 14px",
   borderRadius: 12,
   background: "rgba(234, 179, 8, 0.15)",
-  color: "var(--text)",
   fontSize: 14,
 }
 
-const metaStyle = {
-  color: "var(--text-secondary)",
+const dayTitleStyle = {
+  margin: "0 0 8px 4px",
   fontSize: 13,
+  fontWeight: 600,
+  color: "var(--text-secondary)",
 }
 
-const amountStyle = {
-  fontWeight: "bold",
-  fontSize: 16,
+const groupCardStyle = {
+  background: "var(--card)",
+  border: "1px solid var(--border)",
+  borderRadius: 16,
+  boxShadow: "var(--shadow)",
+  overflow: "hidden",
 }
 
-const itemsContainerStyle = {
-  marginTop: 8,
-  borderTop: "1px solid var(--border)",
-  paddingTop: 10,
-  display: "flex",
-  flexDirection: "column",
-  gap: 6,
-}
-
-const itemRowStyle = {
+const actionStyle = {
+  width: 32,
+  height: 32,
+  padding: 0,
   display: "grid",
-  gridTemplateColumns: "1fr auto auto",
-  gap: 12,
-  fontSize: 13,
+  placeItems: "center",
+  border: "none",
+  borderRadius: 9,
+  background: "transparent",
   color: "var(--text-secondary)",
+}
+
+const emptyStyle = {
+  padding: "28px 16px",
+  textAlign: "center",
+  color: "var(--text-secondary)",
+  background: "var(--card)",
+  border: "1px dashed var(--border)",
+  borderRadius: 16,
+}
+
+const historyLinkStyle = {
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  gap: 4,
+  width: "100%",
+  marginTop: 4,
+  border: "none",
+  background: "transparent",
+  color: "var(--primary)",
+  fontWeight: 600,
 }
 
 const overlayStyle = {
   position: "fixed",
-  top: 0,
-  left: 0,
-  width: "100vw",
-  height: "100vh",
+  inset: 0,
   background: "rgba(0,0,0,0.45)",
   display: "flex",
   alignItems: "center",
   justifyContent: "center",
   zIndex: 1000,
-  padding: 20,
+  padding: 16,
 }
 
 const editModalStyle = {
@@ -339,41 +234,23 @@ const editModalStyle = {
   maxWidth: 550,
   maxHeight: "90vh",
   overflowY: "auto",
-  borderRadius: 16,
+  borderRadius: 18,
   boxShadow: "0 12px 30px rgba(0,0,0,0.3)",
   position: "relative",
 }
 
 const closeButtonStyle = {
   position: "absolute",
-  top: 12,
-  right: 12,
-  width: 32,
-  height: 32,
+  top: 14,
+  right: 14,
+  width: 34,
+  height: 34,
+  padding: 0,
   border: "none",
   borderRadius: "50%",
-  background: "var(--border)",
+  background: "var(--track)",
   color: "var(--text)",
-  cursor: "pointer",
-  fontSize: 18,
+  fontSize: 20,
+  lineHeight: 1,
   zIndex: 10,
-}
-
-const modalStyle = {
-  background: "var(--card)",
-  color: "var(--text)",
-  padding: 30,
-  borderRadius: 12,
-  width: 300,
-  boxShadow: "0 8px 20px rgba(0,0,0,0.2)",
-}
-
-const deleteButtonStyle = {
-  marginLeft: 10,
-  background: "var(--expense)",
-  color: "white",
-  border: "none",
-  padding: "6px 12px",
-  borderRadius: 6,
-  cursor: "pointer",
 }

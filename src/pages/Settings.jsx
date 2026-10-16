@@ -4,7 +4,7 @@ import { signOut } from "firebase/auth";
 import { auth } from "../firebase";
 import { useNavigate } from "react-router-dom";
 
-export default function Settings({ categories, theme, setTheme }) {
+export default function Settings({ categories, expenses, theme, setTheme }) {
 
   const [activeSection, setActiveSection] = useState(null);
   const navigate = useNavigate();
@@ -69,6 +69,7 @@ export default function Settings({ categories, theme, setTheme }) {
 
           <CategoriesManager
             categories={categories}
+            expenses={expenses}
           />
         </>
       )}
