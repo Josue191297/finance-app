@@ -1,70 +1,43 @@
 import { useState } from "react"
-import { auth } from "../firebase"
-import { signInWithEmailAndPassword } from "firebase/auth"
+import { signInWithPopup, signOut } from "firebase/auth"
+import { FcGoogle } from "react-icons/fc"
+import { auth, provider } from "../firebase"
 
-// Login only: household members are added in the Firebase console.
-function Auth() {
-  const [email, setEmail] = useState("")
-  const [password, setPassword] = useState("")
+// Google sign-in; only the accounts in PEOPLE (src/firebase.js) get in.
+function Auth({ user }) {
   const [error, setError] = useState("")
-  const [loading, setLoading] = useState(false)
 
-  const handleSubmit = async (e) => {
-    e.preventDefault()
+  const signIn = () => {
     setError("")
-    setLoading(true)
-
-    try {
-      await signInWithEmailAndPassword(auth, email.trim(), password)
-      setEmail("")
-      setPassword("")
-    } catch (err) {
-      if (err.code === "auth/invalid-email") {
-        setError("Invalid email format.")
-      } else if (
-        err.code === "auth/invalid-credential" ||
-        err.code === "auth/user-not-found" ||
-        err.code === "auth/wrong-password"
-      ) {
-        setError("Incorrect email or password.")
-      } else {
-        setError("Something went wrong. Please try again.")
+    signInWithPopup(auth, provider).catch((e) => {
+      if (e.code !== "auth/popup-closed-by-user" && e.code !== "auth/cancelled-popup-request") {
+        setError("Could not sign in. Please try again.")
       }
-    }
-
-    setLoading(false)
+    })
   }
 
   return (
     <div style={container}>
       <div style={card}>
-        <h2 style={title}>Welcome Back</h2>
+        <h1 style={title}>Finance</h1>
 
-        <form onSubmit={handleSubmit} style={form}>
-          <input
-            type="email"
-            placeholder="Email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            required
-            style={input}
-          />
-
-          <input
-            type="password"
-            placeholder="Password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            required
-            style={input}
-          />
-
-          {error && <p style={errorText}>{error}</p>}
-
-          <button type="submit" style={button} disabled={loading}>
-            {loading ? "Please wait..." : "Login"}
-          </button>
-        </form>
+        {user ? (
+          <>
+            <p style={errorText}>{user.email} doesn't have access.</p>
+            <button style={secondaryButton} onClick={() => signOut(auth)}>
+              Use another account
+            </button>
+          </>
+        ) : (
+          <>
+            <p style={subtitle}>Sign in to see your household finances.</p>
+            <button style={googleButton} onClick={signIn}>
+              <FcGoogle size={20} aria-hidden="true" />
+              Sign in with Google
+            </button>
+            {error && <p style={errorText} role="alert">{error}</p>}
+          </>
+        )}
       </div>
     </div>
   )
@@ -79,51 +52,53 @@ const container = {
   display: "flex",
   alignItems: "center",
   justifyContent: "center",
+  padding: 16,
   background: "var(--bg)",
-  transition: "0.3s"
 }
 
 const card = {
-  width: "90%",
-  maxWidth: 400,
-  padding: 30,
-  borderRadius: 16,
+  width: "100%",
+  maxWidth: 380,
+  padding: "36px 28px",
+  borderRadius: 20,
   background: "var(--card)",
-  boxShadow: "0 10px 25px rgba(0,0,0,0.1)"
+  border: "1px solid var(--border)",
+  boxShadow: "var(--shadow)",
+  display: "flex",
+  flexDirection: "column",
+  alignItems: "center",
+  gap: 14,
+  textAlign: "center",
 }
 
 const title = {
-  marginBottom: 20,
+  margin: 0,
+  fontSize: 28,
   color: "var(--text)",
-  textAlign: "center"
 }
 
-const form = {
+const subtitle = {
+  margin: 0,
+  color: "var(--text-secondary)",
+}
+
+const googleButton = {
+  width: "100%",
   display: "flex",
-  flexDirection: "column",
-  gap: 15
+  alignItems: "center",
+  justifyContent: "center",
+  gap: 10,
+  padding: "12px 16px",
+  fontWeight: 600,
 }
 
-const input = {
-  padding: 12,
-  borderRadius: 8,
-  border: "1px solid var(--border)",
-  background: "var(--input-bg)",
-  color: "var(--text)",
-  fontSize: 14
-}
-
-const button = {
-  padding: 12,
-  borderRadius: 8,
-  border: "none",
-  background: "var(--primary)",
-  color: "#fff",
-  fontWeight: "bold",
-  cursor: "pointer"
+const secondaryButton = {
+  width: "100%",
+  padding: "12px 16px",
 }
 
 const errorText = {
-  color: "red",
-  fontSize: 12
+  margin: 0,
+  color: "var(--expense)",
+  fontSize: 14,
 }

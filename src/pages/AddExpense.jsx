@@ -23,7 +23,8 @@ const emptyItem = () => ({ name: "", amount: "", category: "" })
 const initialItems = (expense) => {
   if (!expense) return [emptyItem()]
   if (expense.items?.length) {
-    return expense.items.map((item) => ({ ...item, amount: String(item.amount ?? "") }))
+    // An empty box (not "0") for imported USD charges waiting for their colones amount.
+    return expense.items.map((item) => ({ ...item, amount: item.amount ? String(item.amount) : "" }))
   }
   return [
     {
@@ -160,6 +161,8 @@ function AddExpense({
       category: null,
       savingGoalId: hasSavingsItem ? savingGoalId || null : null,
       savingGoalName: hasSavingsItem ? selectedGoal?.name || "" : null,
+      // Saving the form counts as reviewing an imported bank transaction.
+      needsReview: false,
     }
 
     setSaving(true)
@@ -192,6 +195,16 @@ function AddExpense({
       <h2 style={titleStyle}>
         {editingExpense ? "Edit transaction" : "New transaction"}
       </h2>
+
+      {editingExpense?.needsReview && editingExpense.currency === "USD" && (
+        <p style={noticeStyle}>
+          Your bank charged USD{" "}
+          {Number(editingExpense.originalAmount || 0).toLocaleString("en-US", {
+            minimumFractionDigits: 2,
+          })}
+          . Enter the colones amount from your bank statement.
+        </p>
+      )}
 
       {/* TYPE */}
       <div style={segmentStyle} role="group" aria-label="Transaction type">
@@ -586,6 +599,14 @@ const smallPrimaryButtonStyle = {
   background: "var(--primary)",
   color: "white",
   fontWeight: 600,
+}
+
+const noticeStyle = {
+  margin: 0,
+  padding: "10px 12px",
+  borderRadius: 10,
+  background: "rgba(234, 179, 8, 0.15)",
+  fontSize: 14,
 }
 
 const errorStyle = {

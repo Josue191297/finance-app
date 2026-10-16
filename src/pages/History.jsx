@@ -1,5 +1,6 @@
 import { useState } from "react"
 import { parseLocalDate, expenseTotal as getTotal, transactionLabel } from "../money"
+import ReviewTag from "../components/ReviewTag"
 
 function History({ expenses }) {
   const [search, setSearch] = useState("")
@@ -40,6 +41,7 @@ function History({ expenses }) {
               <div>
                 <strong>{expense.name}</strong>
                 <div style={metaStyle}>
+                  <ReviewTag expense={expense} />
                   {transactionLabel(expense)}
 
                   {" | "}

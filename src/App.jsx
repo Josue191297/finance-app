@@ -25,7 +25,7 @@ import SavingsGoals from "./pages/SavingGoals"
 
 import SyncIndicator from "./components/SyncIndicator"
 
-import { auth, db } from "./firebase"
+import { auth, db, hasAccess } from "./firebase"
 import { onAuthStateChanged } from "firebase/auth"
 import {
   collection,
@@ -61,6 +61,8 @@ function App() {
     return () => unsubscribe()
   }, [])
 
+  const allowed = hasAccess(user)
+
   /* ---------------- STATE ---------------- */
 
   const [expenses, setExpenses] = useState([])
@@ -72,7 +74,7 @@ function App() {
   /* ---------------- FIRESTORE SYNC ---------------- */
 
   useEffect(() => {
-    if (!user) return
+    if (!allowed) return
 
     const unsubExpenses = onSnapshot(
       collection(db, "households", householdId, "expenses"),
@@ -99,9 +101,8 @@ function App() {
     return () => {
       unsubExpenses()
       unsubCategories()
-
     }
-  }, [user])
+  }, [allowed])
 
 
   /* ---------------- ADD EXPENSE ---------------- */
@@ -119,8 +120,8 @@ function App() {
     return <div style={{ padding: 40 }}>Loading...</div>
   }
 
-  if (!user) {
-    return <Auth />
+  if (!allowed) {
+    return <Auth user={user} />
   }
 
   /* ---------------- UI ---------------- */

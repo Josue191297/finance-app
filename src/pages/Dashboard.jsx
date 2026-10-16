@@ -1,10 +1,11 @@
 import { useState } from "react"
 import AddExpense from "./AddExpense"
-import { doc, deleteDoc } from "firebase/firestore"
+import { doc, deleteDoc, updateDoc } from "firebase/firestore"
 import { db } from "../firebase"
 import { householdId } from "../household"
-import { FiEdit2, FiX } from "react-icons/fi"
+import { FiCheck, FiEdit2, FiX } from "react-icons/fi"
 import { parseLocalDate, expenseTotal as getExpenseTotal, transactionLabel } from "../money"
+import ReviewTag from "../components/ReviewTag"
 
 const RECENT_DAYS = 30
 
@@ -45,6 +46,19 @@ function Dashboard({ categories, expenses }) {
     }
   }
 
+  // Confirms an imported transaction as-is (category and amount already right).
+  const confirmReview = async (expense) => {
+    try {
+      await updateDoc(doc(db, "households", householdId, "expenses", expense.id), {
+        needsReview: false,
+      })
+    } catch (error) {
+      console.error("Review error:", error)
+    }
+  }
+
+  const reviewCount = expenses.filter((expense) => expense.needsReview).length
+
   const sortedExpenses = [...expenses].sort((a, b) => {
     const dateA = parseLocalDate(a.date) || new Date(0)
     const dateB = parseLocalDate(b.date) || new Date(0)
@@ -57,6 +71,13 @@ function Dashboard({ categories, expenses }) {
   return (
     <div style={containerStyle}>
       <h2 style={titleStyle}>Dashboard</h2>
+
+      {reviewCount > 0 && (
+        <p style={reviewBannerStyle}>
+          {reviewCount} imported {reviewCount === 1 ? "transaction needs" : "transactions need"} a
+          quick check. Tap ✓ if it looks right, or ✎ to change it.
+        </p>
+      )}
 
       {hiddenCount > 0 && (
         <p style={hintStyle}>
@@ -79,22 +100,41 @@ function Dashboard({ categories, expenses }) {
                 </strong>
 
                 <div style={iconRowStyle}>
-                  <FiEdit2
-                    size={15}
-                    style={iconStyle}
-                    onClick={() => setEditingExpense(expense)}
-                  />
+                  {/* USD imports have no colones amount yet, so they must go through the form. */}
+                  {expense.needsReview && expense.currency !== "USD" && (
+                    <button
+                      style={{ ...iconButtonStyle, color: "var(--income)" }}
+                      onClick={() => confirmReview(expense)}
+                      title="Looks right"
+                      aria-label={`Confirm ${expense.name}`}
+                    >
+                      <FiCheck size={17} />
+                    </button>
+                  )}
 
-                  <FiX
-                    size={15}
-                    style={deleteIconStyle}
+                  <button
+                    style={iconButtonStyle}
+                    onClick={() => setEditingExpense(expense)}
+                    title="Edit"
+                    aria-label={`Edit ${expense.name}`}
+                  >
+                    <FiEdit2 size={15} />
+                  </button>
+
+                  <button
+                    style={{ ...iconButtonStyle, color: "var(--expense)" }}
                     onClick={() => setExpenseToDelete(expense)}
-                  />
+                    title="Delete"
+                    aria-label={`Delete ${expense.name}`}
+                  >
+                    <FiX size={17} />
+                  </button>
                 </div>
               </div>
 
               <div style={rowStyle}>
                 <div style={metaStyle}>
+                  <ReviewTag expense={expense} />
                   {transactionLabel(expense)}
 
                   {" | "}
@@ -228,19 +268,28 @@ const nameStyle = {
 
 const iconRowStyle = {
   display: "flex",
-  gap: 12,
+  gap: 4,
 }
 
-const iconStyle = {
-  cursor: "pointer",
-  opacity: 0.7,
-  transition: "0.2s",
+const iconButtonStyle = {
+  width: 36,
+  height: 36,
+  padding: 0,
+  display: "grid",
+  placeItems: "center",
+  border: "none",
+  borderRadius: 10,
+  background: "transparent",
+  color: "var(--text-secondary)",
 }
 
-const deleteIconStyle = {
-  cursor: "pointer",
-  opacity: 0.7,
-  transition: "0.2s",
+const reviewBannerStyle = {
+  margin: "0 0 16px",
+  padding: "10px 14px",
+  borderRadius: 12,
+  background: "rgba(234, 179, 8, 0.15)",
+  color: "var(--text)",
+  fontSize: 14,
 }
 
 const metaStyle = {

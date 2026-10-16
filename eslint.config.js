@@ -5,7 +5,8 @@ import reactRefresh from 'eslint-plugin-react-refresh'
 import { defineConfig, globalIgnores } from 'eslint/config'
 
 export default defineConfig([
-  globalIgnores(['dist']),
+  // Code.js runs in Google Apps Script (GmailApp etc.), not the browser; parse.test.js covers it.
+  globalIgnores(['dist', 'bank-email-import/Code.js']),
   {
     files: ['**/*.{js,jsx}'],
     extends: [
